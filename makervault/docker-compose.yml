@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+api:
+build: ./api
+ports:
+- "8000:8000"
+environment:
+- FILE_STORAGE=/app/storage
+- DB_URL=sqlite:///./app.db
+- CORS_ORIGINS=http://localhost:5173
+volumes:
+- ./data/storage:/app/storage
+- ./api:/app
+web:
+build: ./web
+ports:
+- "5173:5173"
+environment:
+- VITE_API_URL=http://localhost:8000
+volumes:
+- ./web:/app
+depends_on:
+- api
