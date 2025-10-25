@@ -1,15 +1,29 @@
 import React from "react";
-import ModelViewer from "./ModelViewer";
+import UploadBar from "./UploadBar";
+import AssetGrid from "./AssetGrid";
+import Sidebar from "./Sidebar";
+import { API_BASE, apiHealth } from "../lib/api";
 
-// For a quick test, put a model file in web/public/ as 'sample.stl' or 'sample.step'
 export default function App() {
+  const [nonce, setNonce] = React.useState(0);
+  const [folderId, setFolderId] = React.useState<string | null>(null);
+  const [apiUp, setApiUp] = React.useState<boolean | null>(null);
+  React.useEffect(() => { (async ()=> setApiUp(await apiHealth()))(); }, []);
   return (
-    <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 28, marginBottom: 12 }}>MakerVault ✅</h1>
-      <p>3D preview test below (expects /sample.stl in /public):</p>
-      <div style={{ width: 480, height: 360, border: "1px solid #ddd", borderRadius: 12, overflow: "hidden" }}>
-        <ModelViewer url="/sample.stl" ext="stl" />
-      </div>
+    <div className="h-screen flex">
+      <Sidebar selectedId={folderId} onSelect={setFolderId} />
+      <main className="flex-1 p-4 overflow-auto">
+        {apiUp === false && (
+          <div className="mb-3 p-2 rounded-md bg-red-100 text-red-900 dark:bg-red-900/30 dark:text-red-100">
+            API unreachable at {API_BASE}. Ensure the API container is running and port 8000 is accessible.
+          </div>
+        )}
+        <header className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-semibold">MakerVault</h1>
+          <UploadBar folderId={folderId} onUploaded={() => setNonce(n => n + 1)} />
+        </header>
+        <AssetGrid key={nonce + (folderId||'')} folderId={folderId} />
+      </main>
     </div>
   );
 }
