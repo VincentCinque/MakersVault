@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Folder, createFolder, deleteFolder, listFolders, updateFolder } from "../lib/api";
+import TagInput from "./TagInput";
 
 type Props = {
   selectedId?: string | null;
@@ -13,7 +14,7 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [editTags, setEditTags] = useState("");
+  const [editTags, setEditTags] = useState<string[]>([]);
 
   const refresh = async () => setFolders(await listFolders());
   useEffect(() => { refresh(); }, []);
@@ -31,16 +32,15 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
   const startEdit = (f: Folder) => {
     setEditing(f.id);
     setEditName(f.name);
-    setEditTags(f.tags.join(", "));
+    setEditTags(f.tags);
   };
   const saveEdit = async () => {
     if (!editing) return;
     setBusy(true);
     try {
-      const tags = editTags.split(",").map(s=>s.trim()).filter(Boolean);
-      await updateFolder(editing, editName.trim() || "Untitled", tags);
+      await updateFolder(editing, editName.trim() || "Untitled", editTags);
       await refresh();
-    } finally { setBusy(false); setEditing(null); }
+    } finally { setBusy(false); setEditing(null); setEditTags([]); }
   };
 
   const remove = async (id: string) => {
@@ -78,24 +78,25 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
       </div>
 
       {creating && (
-        <div className="mt-2 flex items-center gap-2">
-          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Folder name" className="px-2 py-1 text-sm rounded-md border flex-1" />
-          <button disabled={busy} className="text-sm px-2 py-1 rounded-md bg-emerald-600 text-white" onClick={create}>Create</button>
-          <button className="text-sm px-2 py-1 rounded-md border" onClick={()=>setCreating(false)}>Cancel</button>
+        <div className="mt-2 flex flex-col gap-2">
+          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Folder name" className="px-2 py-1 text-sm rounded-md border w-full" />
+          <div className="flex gap-2">
+            <button disabled={busy} className="text-sm px-3 py-1 rounded-md bg-emerald-600 text-white flex-1" onClick={create}>Create</button>
+            <button className="text-sm px-3 py-1 rounded-md border flex-1" onClick={()=>setCreating(false)}>Cancel</button>
+          </div>
         </div>
       )}
 
       {editing && (
         <div className="mt-2 flex flex-col gap-2">
           <input value={editName} onChange={e=>setEditName(e.target.value)} className="px-2 py-1 text-sm rounded-md border" />
-          <input value={editTags} onChange={e=>setEditTags(e.target.value)} placeholder="Tags (comma separated)" className="px-2 py-1 text-sm rounded-md border" />
+          <TagInput value={editTags} onChange={setEditTags} placeholder="Add folder tags" />
           <div className="flex items-center gap-2">
             <button disabled={busy} className="text-sm px-2 py-1 rounded-md bg-emerald-600 text-white" onClick={saveEdit}>Save</button>
-            <button className="text-sm px-2 py-1 rounded-md border" onClick={()=>setEditing(null)}>Cancel</button>
+            <button className="text-sm px-2 py-1 rounded-md border" onClick={()=>{ setEditing(null); setEditTags([]); }}>Cancel</button>
           </div>
         </div>
       )}
     </aside>
   );
 }
-

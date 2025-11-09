@@ -19,7 +19,11 @@ export default function App() {
           </div>
         )}
         <header className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">MakerVault</h1>
+          <img
+            src="/logo.svg"
+            alt="Makers Vault"
+            className="h-20 w-auto max-w-[280px]"
+          />
           <UploadBar folderId={folderId} onUploaded={() => setNonce(n => n + 1)} />
         </header>
         <AssetGrid key={nonce + (folderId||'')} folderId={folderId} />

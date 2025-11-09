@@ -178,6 +178,8 @@ async def upload(
             db_a.size = size
             s.add(db_a)
             s.commit()
+            s.refresh(db_a)
+            asset = db_a
 
     return to_out(asset)
 
@@ -187,7 +189,18 @@ def get_file(asset_id: str, name: str):
     p = asset_path(asset_id, name)
     if not p.exists():
         raise HTTPException(404)
-    return FileResponse(p)
+
+    media_type: Optional[str] = None
+    with Session(engine) as s:
+        a = s.get(Asset, asset_id)
+        if a:
+            media_type = a.mime
+
+    return FileResponse(
+        p,
+        media_type=media_type or "application/octet-stream",
+        filename=name,
+    )
 
 
 @app.get("/thumb/{asset_id}.jpg")
@@ -223,6 +236,15 @@ class TagUpdate(BaseModel):
     tags: List[str]
 
 
+class AssetMetaUpdate(BaseModel):
+    title: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AssetRename(BaseModel):
+    filename: str
+
+
 @app.post("/asset/{asset_id}/tags", response_model=AssetOut)
 def set_tags(asset_id: str, body: TagUpdate):
     with Session(engine) as s:
@@ -230,6 +252,56 @@ def set_tags(asset_id: str, body: TagUpdate):
         if not a:
             raise HTTPException(404)
         a.tags_json = json.dumps(body.tags)
+        s.add(a)
+        s.commit()
+        s.refresh(a)
+        return to_out(a)
+
+
+@app.post("/asset/{asset_id}/meta", response_model=AssetOut)
+def update_asset_meta(asset_id: str, body: AssetMetaUpdate):
+    with Session(engine) as s:
+        a = s.get(Asset, asset_id)
+        if not a:
+            raise HTTPException(404)
+        if body.title is not None:
+            a.title = body.title
+        if body.notes is not None:
+            a.notes = body.notes
+        s.add(a)
+        s.commit()
+        s.refresh(a)
+        return to_out(a)
+
+
+@app.post("/asset/{asset_id}/rename", response_model=AssetOut)
+def rename_asset(asset_id: str, body: AssetRename):
+    new_name = (body.filename or "").strip()
+    if not new_name:
+        raise HTTPException(400, "Filename cannot be empty")
+    if "/" in new_name or "\\" in new_name:
+        raise HTTPException(400, "Invalid filename")
+
+    with Session(engine) as s:
+        a = s.get(Asset, asset_id)
+        if not a:
+            raise HTTPException(404)
+        old_path = asset_path(asset_id, a.filename)
+        if not old_path.exists():
+            raise HTTPException(404, "File not found on disk")
+        root, ext = os.path.splitext(os.path.basename(a.filename))
+        proposed_root, proposed_ext = os.path.splitext(os.path.basename(new_name))
+        final_ext = proposed_ext or ext
+        if not final_ext:
+            raise HTTPException(400, "Filename must include an extension")
+        new_name_only = (proposed_root or root) + final_ext
+        new_path = asset_path(asset_id, new_name_only)
+        if new_name_only == a.filename:
+            return to_out(a)
+        if new_path.exists():
+            raise HTTPException(400, "A file with that name already exists")
+        old_path.rename(new_path)
+        a.filename = new_name_only
         s.add(a)
         s.commit()
         s.refresh(a)

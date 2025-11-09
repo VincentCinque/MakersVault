@@ -65,6 +65,32 @@ export async function setTags(id: string, tags: string[]) {
   return res.json();
 }
 
+export async function updateAssetMeta(id: string, payload: { title?: string | null; notes?: string | null }) {
+  const res = await fetch(`${API}/asset/${id}/meta`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("Metadata update failed");
+  return res.json();
+}
+
+export async function deleteAsset(id: string) {
+  const res = await fetch(`${API}/asset/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Delete asset failed");
+  return res.json();
+}
+
+export async function renameAsset(id: string, filename: string) {
+  const res = await fetch(`${API}/asset/${id}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename }),
+  });
+  if (!res.ok) throw new Error("Rename failed");
+  return res.json();
+}
+
 export function fileUrl(rel: string) {
   // API returns relative URLs. Join with API base.
   if (!rel) return rel;
