@@ -20,9 +20,9 @@ export default function App() {
         )}
         <header className="flex items-center justify-between mb-4">
           <img
-            src="/logo.svg"
+            src="/img/whitelogo.png"
             alt="Makers Vault"
-            className="h-20 w-auto max-w-[280px]"
+            className="h-32 w-auto max-w-[420px]"
           />
           <UploadBar folderId={folderId} onUploaded={() => setNonce(n => n + 1)} />
         </header>
