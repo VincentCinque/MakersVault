@@ -1,3 +1,5 @@
+import { appendTokenToUrl, authHeaders } from "./auth";
+
 export type Asset = {
   id: string;
   filename: string;
@@ -34,7 +36,9 @@ export async function listAssets(params: { q?: string; tags?: string[]; folder_i
   if (params.q) qs.set("q", params.q);
   if (params.tags && params.tags.length) qs.set("tags", params.tags.join(","));
   if (params.folder_id) qs.set("folder_id", params.folder_id);
-  const res = await fetch(`${API}/assets?${qs.toString()}`);
+  const res = await fetch(`${API}/assets?${qs.toString()}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to list assets");
   return res.json();
 }
@@ -50,7 +54,11 @@ export async function uploadAsset(
   if (opts.notes) fd.set("notes", opts.notes);
   if (opts.tags && opts.tags.length) fd.set("tags", opts.tags.join(","));
   if (opts.folder_id) fd.set("folder_id", opts.folder_id);
-  const res = await fetch(`${API}/upload`, { method: "POST", body: fd });
+  const res = await fetch(`${API}/upload`, {
+    method: "POST",
+    body: fd,
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Upload failed");
   return res.json();
 }
@@ -58,7 +66,7 @@ export async function uploadAsset(
 export async function setTags(id: string, tags: string[]) {
   const res = await fetch(`${API}/asset/${id}/tags`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ tags }),
   });
   if (!res.ok) throw new Error("Tag update failed");
@@ -68,7 +76,7 @@ export async function setTags(id: string, tags: string[]) {
 export async function updateAssetMeta(id: string, payload: { title?: string | null; notes?: string | null }) {
   const res = await fetch(`${API}/asset/${id}/meta`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error("Metadata update failed");
@@ -76,7 +84,7 @@ export async function updateAssetMeta(id: string, payload: { title?: string | nu
 }
 
 export async function deleteAsset(id: string) {
-  const res = await fetch(`${API}/asset/${id}`, { method: "DELETE" });
+  const res = await fetch(`${API}/asset/${id}`, { method: "DELETE", headers: authHeaders() });
   if (!res.ok) throw new Error("Delete asset failed");
   return res.json();
 }
@@ -84,17 +92,27 @@ export async function deleteAsset(id: string) {
 export async function renameAsset(id: string, filename: string) {
   const res = await fetch(`${API}/asset/${id}/rename`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ filename }),
   });
   if (!res.ok) throw new Error("Rename failed");
   return res.json();
 }
 
+export async function updateAssetFolder(id: string, folder_id: string | null) {
+  const res = await fetch(`${API}/asset/${id}/folder`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ folder_id }),
+  });
+  if (!res.ok) throw new Error("Folder update failed");
+  return res.json();
+}
+
 export function fileUrl(rel: string) {
   // API returns relative URLs. Join with API base.
   if (!rel) return rel;
-  return `${API}${rel}`;
+  return appendTokenToUrl(`${API}${rel}`);
 }
 
 // Folders -------------------------------------------------------
@@ -102,7 +120,7 @@ export function fileUrl(rel: string) {
 export type Folder = { id: string; name: string; tags: string[] };
 
 export async function listFolders(): Promise<Folder[]> {
-  const res = await fetch(`${API}/folders`);
+  const res = await fetch(`${API}/folders`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to list folders");
   return res.json();
 }
@@ -110,7 +128,7 @@ export async function listFolders(): Promise<Folder[]> {
 export async function createFolder(name: string, tags: string[] = []) {
   const res = await fetch(`${API}/folders`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ name, tags }),
   });
   if (!res.ok) throw new Error("Create folder failed");
@@ -120,7 +138,7 @@ export async function createFolder(name: string, tags: string[] = []) {
 export async function updateFolder(id: string, name: string, tags: string[]) {
   const res = await fetch(`${API}/folder/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ name, tags }),
   });
   if (!res.ok) throw new Error("Update folder failed");
@@ -128,18 +146,44 @@ export async function updateFolder(id: string, name: string, tags: string[]) {
 }
 
 export async function deleteFolder(id: string) {
-  const res = await fetch(`${API}/folder/${id}`, { method: "DELETE" });
+  const res = await fetch(`${API}/folder/${id}`, { method: "DELETE", headers: authHeaders() });
   if (!res.ok) throw new Error("Delete folder failed");
   return res.json();
 }
 
-export async function apiHealth(): Promise<boolean> {
+export type HealthInfo = { ok: boolean; auth_required: boolean };
+
+export async function apiHealth(): Promise<HealthInfo | null> {
   try {
     const res = await fetch(`${API}/health`, { cache: "no-store" });
-    return res.ok;
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      ok: Boolean(data?.ok),
+      auth_required: Boolean(data?.auth_required),
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
 export const API_BASE = API;
+
+export async function login(username: string, password: string): Promise<{ token: string; expires_in: number }> {
+  const res = await fetch(`${API}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    let message = "Login failed";
+    try {
+      const data = await res.json();
+      if (typeof data?.detail === "string") message = data.detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}

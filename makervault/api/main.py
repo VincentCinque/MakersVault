@@ -1,12 +1,16 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import Depends, FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel, Session, create_engine, select, Field
 from pydantic import BaseModel
 from typing import List, Optional
 from pathlib import Path
 from PIL import Image
-import os, uuid, json
+import os, uuid, json, time
+
+import jwt
+from jwt import PyJWTError
 
 
 DB_URL = os.getenv("DB_URL", "sqlite:///./app.db")
@@ -17,6 +21,14 @@ THUMBS.mkdir(parents=True, exist_ok=True)
 
 
 engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "super-secret")
+AUTH_SECRET = os.getenv("AUTH_SECRET", "changeme-secret")
+AUTH_TOKEN_TTL = int(os.getenv("AUTH_TOKEN_TTL", "43200"))
+AUTH_ALGO = "HS256"
+AUTH_ENABLED = bool(AUTH_USERNAME and AUTH_PASSWORD)
+auth_scheme = HTTPBearer(auto_error=False)
 
 
 class Folder(SQLModel, table=True):
@@ -66,6 +78,16 @@ class FolderOut(BaseModel):
     tags: List[str]
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    expires_in: int
+
+
 app = FastAPI(title="MakerVault API")
 
 
@@ -86,6 +108,28 @@ def on_startup():
 
 
 # Utilities ------------------------------------------------------
+
+
+def create_token(username: str) -> str:
+    now = int(time.time())
+    payload = {"sub": username, "iat": now, "exp": now + AUTH_TOKEN_TTL}
+    return jwt.encode(payload, AUTH_SECRET, algorithm=AUTH_ALGO)
+
+
+def require_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme),
+    token_param: Optional[str] = Query(default=None, alias="token"),
+):
+    if not AUTH_ENABLED:
+        return None
+    token = credentials.credentials if credentials else token_param
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        jwt.decode(token, AUTH_SECRET, algorithms=[AUTH_ALGO])
+    except PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return token
 
 
 def asset_dir(asset_id: str) -> Path:
@@ -131,7 +175,17 @@ def to_out(a: Asset) -> AssetOut:
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "auth_required": AUTH_ENABLED}
+
+
+@app.post("/login", response_model=LoginResponse)
+def login(body: LoginRequest):
+    if not AUTH_ENABLED:
+        raise HTTPException(status_code=503, detail="Authentication is not configured on the server")
+    if body.username != AUTH_USERNAME or body.password != AUTH_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = create_token(body.username)
+    return LoginResponse(token=token, expires_in=AUTH_TOKEN_TTL)
 
 
 @app.post("/upload", response_model=AssetOut)
@@ -141,6 +195,7 @@ async def upload(
     notes: Optional[str] = Form(default=None),
     tags: Optional[str] = Form(default=None),  # comma-separated
     folder_id: Optional[str] = Form(default=None),
+    _: Optional[str] = Depends(require_auth),
 ):
     asset = Asset(
         filename=file.filename,
@@ -185,7 +240,7 @@ async def upload(
 
 
 @app.get("/file/{asset_id}/{name}")
-def get_file(asset_id: str, name: str):
+def get_file(asset_id: str, name: str, _: Optional[str] = Depends(require_auth)):
     p = asset_path(asset_id, name)
     if not p.exists():
         raise HTTPException(404)
@@ -204,7 +259,7 @@ def get_file(asset_id: str, name: str):
 
 
 @app.get("/thumb/{asset_id}.jpg")
-def get_thumb(asset_id: str):
+def get_thumb(asset_id: str, _: Optional[str] = Depends(require_auth)):
     p = THUMBS / f"{asset_id}.jpg"
     if not p.exists():
         raise HTTPException(404)
@@ -212,7 +267,12 @@ def get_thumb(asset_id: str):
 
 
 @app.get("/assets", response_model=List[AssetOut])
-def list_assets(q: Optional[str] = None, tags: Optional[str] = Query(default=None, description="Comma-separated tags"), folder_id: Optional[str] = None):
+def list_assets(
+    q: Optional[str] = None,
+    tags: Optional[str] = Query(default=None, description="Comma-separated tags"),
+    folder_id: Optional[str] = None,
+    _: Optional[str] = Depends(require_auth),
+):
     with Session(engine) as s:
         stmt = select(Asset)
         if q:
@@ -245,8 +305,12 @@ class AssetRename(BaseModel):
     filename: str
 
 
+class AssetFolderUpdate(BaseModel):
+    folder_id: Optional[str] = None
+
+
 @app.post("/asset/{asset_id}/tags", response_model=AssetOut)
-def set_tags(asset_id: str, body: TagUpdate):
+def set_tags(asset_id: str, body: TagUpdate, _: Optional[str] = Depends(require_auth)):
     with Session(engine) as s:
         a = s.get(Asset, asset_id)
         if not a:
@@ -259,7 +323,7 @@ def set_tags(asset_id: str, body: TagUpdate):
 
 
 @app.post("/asset/{asset_id}/meta", response_model=AssetOut)
-def update_asset_meta(asset_id: str, body: AssetMetaUpdate):
+def update_asset_meta(asset_id: str, body: AssetMetaUpdate, _: Optional[str] = Depends(require_auth)):
     with Session(engine) as s:
         a = s.get(Asset, asset_id)
         if not a:
@@ -275,7 +339,7 @@ def update_asset_meta(asset_id: str, body: AssetMetaUpdate):
 
 
 @app.post("/asset/{asset_id}/rename", response_model=AssetOut)
-def rename_asset(asset_id: str, body: AssetRename):
+def rename_asset(asset_id: str, body: AssetRename, _: Optional[str] = Depends(require_auth)):
     new_name = (body.filename or "").strip()
     if not new_name:
         raise HTTPException(400, "Filename cannot be empty")
@@ -309,7 +373,7 @@ def rename_asset(asset_id: str, body: AssetRename):
 
 
 @app.delete("/asset/{asset_id}")
-def delete_asset(asset_id: str):
+def delete_asset(asset_id: str, _: Optional[str] = Depends(require_auth)):
     with Session(engine) as s:
         a = s.get(Asset, asset_id)
         if not a:
@@ -333,7 +397,7 @@ def delete_asset(asset_id: str):
 
 
 @app.get("/folders", response_model=List[FolderOut])
-def list_folders():
+def list_folders(_: Optional[str] = Depends(require_auth)):
     with Session(engine) as s:
         rows = list(s.exec(select(Folder)))
     out: List[FolderOut] = []
@@ -343,7 +407,7 @@ def list_folders():
 
 
 @app.post("/folders", response_model=FolderOut)
-def create_folder(body: FolderIn):
+def create_folder(body: FolderIn, _: Optional[str] = Depends(require_auth)):
     f = Folder(name=body.name, tags_json=json.dumps(body.tags))
     with Session(engine) as s:
         s.add(f)
@@ -353,7 +417,7 @@ def create_folder(body: FolderIn):
 
 
 @app.patch("/folder/{folder_id}", response_model=FolderOut)
-def update_folder(folder_id: str, body: FolderIn):
+def update_folder(folder_id: str, body: FolderIn, _: Optional[str] = Depends(require_auth)):
     with Session(engine) as s:
         f = s.get(Folder, folder_id)
         if not f:
@@ -367,7 +431,7 @@ def update_folder(folder_id: str, body: FolderIn):
 
 
 @app.delete("/folder/{folder_id}")
-def delete_folder(folder_id: str):
+def delete_folder(folder_id: str, _: Optional[str] = Depends(require_auth)):
     with Session(engine) as s:
         f = s.get(Folder, folder_id)
         if not f:
@@ -375,3 +439,21 @@ def delete_folder(folder_id: str):
         s.delete(f)
         s.commit()
     return {"ok": True}
+@app.post("/asset/{asset_id}/folder", response_model=AssetOut)
+def update_asset_folder(asset_id: str, body: AssetFolderUpdate, _: Optional[str] = Depends(require_auth)):
+    with Session(engine) as s:
+        asset = s.get(Asset, asset_id)
+        if not asset:
+            raise HTTPException(404)
+        folder_id = body.folder_id or None
+        if folder_id:
+            folder = s.get(Folder, folder_id)
+            if not folder:
+                raise HTTPException(status_code=400, detail="Folder not found")
+            asset.folder_id = folder.id
+        else:
+            asset.folder_id = None
+        s.add(asset)
+        s.commit()
+        s.refresh(asset)
+        return to_out(asset)

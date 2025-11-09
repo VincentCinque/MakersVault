@@ -119,6 +119,19 @@ export default function ModelViewer({ url, ext, assetId }: ModelViewerProps) {
             const box = new THREE.Box3().setFromObject(group);
             centerSceneOn(box);
           });
+        } else if (e === "obj") {
+          const { OBJLoader } = await import("three/examples/jsm/loaders/OBJLoader.js");
+          new OBJLoader().load(
+            url,
+            group => {
+              if (disposed) return;
+              scene.add(group);
+              const box = new THREE.Box3().setFromObject(group);
+              centerSceneOn(box);
+            },
+            undefined,
+            err => console.error("OBJ load failed:", err)
+          );
         } else if (e === "step" || e === "stp") {
           try {
             type OcctMesh = {

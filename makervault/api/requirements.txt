@@ -7,3 +7,4 @@ sqlmodel==0.0.21
 python-multipart==0.0.9
 pillow==10.4.0
 starlette==0.38.5
+PyJWT==2.9.0
