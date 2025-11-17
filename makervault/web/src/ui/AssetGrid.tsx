@@ -11,7 +11,7 @@ import {
   updateAssetFolder,
   updateAssetMeta,
 } from "../lib/api";
-import ModelViewer from "./ModelViewer";
+import ModelViewer, { ModelSnapshot } from "./ModelViewer";
 import TagBadge from "./TagBadge";
 import TagInput from "./TagInput";
 import { colorForTag } from "./tagColors";
@@ -668,19 +668,35 @@ function renderPreviewContent(asset: Asset, variant: PreviewVariant) {
     variant === "card"
       ? "w-full h-full object-cover"
       : "w-full h-full object-contain bg-white";
+  const is3d = ["stl", "3mf", "step", "stp", "obj"].includes(ext);
 
-  if (thumbUrl) {
-    return <img src={thumbUrl} alt={asset.filename} className={imgClass} />;
+  if (variant === "card") {
+    if (thumbUrl) {
+      return <img src={thumbUrl} alt={asset.filename} className={imgClass} />;
+    }
+    if (ext === "svg") {
+      return <img src={assetUrl} alt={asset.filename} className={imgClass} />;
+    }
+    if (is3d) {
+      return <ModelSnapshot url={assetUrl} ext={ext} assetId={asset.id} />;
+    }
+    return (
+      <div className="flex items-center justify-center w-full h-full text-sm opacity-60">
+        No preview
+      </div>
+    );
   }
-  if (ext === "svg") {
-    return <img src={assetUrl} alt={asset.filename} className={imgClass} />;
-  }
-  if (["stl", "3mf", "step", "stp", "obj"].includes(ext)) {
+
+  if (is3d) {
     return <ModelViewer key={`${variant}-${asset.id}`} url={assetUrl} ext={ext} assetId={asset.id} />;
+  }
+  if (thumbUrl || ext === "svg") {
+    const src = thumbUrl || assetUrl;
+    return <img src={src} alt={asset.filename} className={imgClass} />;
   }
   return (
     <div className="flex items-center justify-center w-full h-full text-sm opacity-60">
-      {variant === "card" ? "No preview" : "Preview unavailable"}
+      Preview unavailable
     </div>
   );
 }

@@ -79,7 +79,12 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
 
       {creating && (
         <div className="mt-2 flex flex-col gap-2">
-          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Folder name" className="px-2 py-1 text-sm rounded-md border w-full" />
+          <input
+            value={newName}
+            onChange={e=>setNewName(e.target.value)}
+            placeholder="Folder name"
+            className="px-2 py-1 text-sm rounded-md border w-full bg-white text-neutral-900 dark:bg-neutral-900 dark:text-white"
+          />
           <div className="flex gap-2">
             <button disabled={busy} className="text-sm px-3 py-1 rounded-md bg-emerald-600 text-white flex-1" onClick={create}>Create</button>
             <button className="text-sm px-3 py-1 rounded-md border flex-1" onClick={()=>setCreating(false)}>Cancel</button>
@@ -89,7 +94,11 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
 
       {editing && (
         <div className="mt-2 flex flex-col gap-2">
-          <input value={editName} onChange={e=>setEditName(e.target.value)} className="px-2 py-1 text-sm rounded-md border" />
+          <input
+            value={editName}
+            onChange={e=>setEditName(e.target.value)}
+            className="px-2 py-1 text-sm rounded-md border bg-white text-neutral-900 dark:bg-neutral-900 dark:text-white"
+          />
           <TagInput value={editTags} onChange={setEditTags} placeholder="Add folder tags" />
           <div className="flex items-center gap-2">
             <button disabled={busy} className="text-sm px-2 py-1 rounded-md bg-emerald-600 text-white" onClick={saveEdit}>Save</button>

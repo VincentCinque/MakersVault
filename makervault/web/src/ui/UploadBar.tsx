@@ -8,19 +8,26 @@ export default function UploadBar({ onUploaded, folderId }: Props) {
   const [busy, setBusy] = useState(false);
 
   const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setBusy(true);
-      await uploadAsset(file, { folder_id: folderId || undefined });
-      onUploaded();
-    } catch (err) {
-      console.error(err);
-      alert("Upload failed");
-    } finally {
-      setBusy(false);
-      if (inputRef.current) inputRef.current.value = "";
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setBusy(true);
+    let success = 0;
+    let failed: string[] = [];
+    for (const file of files) {
+      try {
+        await uploadAsset(file, { folder_id: folderId || undefined });
+        success += 1;
+      } catch (err) {
+        console.error("Upload failed for", file.name, err);
+        failed.push(file.name);
+      }
     }
+    if (success) onUploaded();
+    if (failed.length) {
+      alert(`Failed to upload: ${failed.join(", ")}`);
+    }
+    setBusy(false);
+    if (inputRef.current) inputRef.current.value = "";
   };
 
   return (
@@ -29,6 +36,7 @@ export default function UploadBar({ onUploaded, folderId }: Props) {
         ref={inputRef}
         type="file"
         onChange={onPick}
+        multiple
         accept=".png,.jpg,.jpeg,.webp,.bmp,.svg,.stl,.step,.stp,.3mf"
         className="hidden"
       />
