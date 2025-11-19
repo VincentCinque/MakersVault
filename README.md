@@ -7,7 +7,60 @@
 <img width="1902" height="882" alt="image" src="https://github.com/user-attachments/assets/2ac2f74c-481c-4bde-94ad-3c37cb95f400" />
 
 <h2>Getting Started</h2>
-<p>Makers Vault is deployable using Docker</p>
+<p>Makers Vault is deployable using Docker pull or docker compose:</p>
+<h3>Docker Compose</h3>
+
+```yaml
+version: "3.9"
+
+services:
+  api:
+    image: ${API_IMAGE:-shotgunwilly555/makersvault-api:v1}
+    restart: unless-stopped
+    environment:
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-super-secret}
+      - AUTH_SECRET=${AUTH_SECRET:-changeme-secret}
+      - AUTH_TOKEN_TTL=${AUTH_TOKEN_TTL:-43200}
+      - FILE_STORAGE=/app/storage
+      - DB_URL=sqlite:////app/data/app.db
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+    volumes:
+      - makersvault_storage:/app/storage
+      - makersvault_db:/app/data
+    ports:
+      - "8000:8000"
+
+  web:
+    image: ${WEB_IMAGE:-shotgunwilly555/makersvault-web:v1}
+    restart: unless-stopped
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  makersvault_storage:
+  makersvault_db:
+```
+
+<h3>Docker Pull</h3>
+
+```bash
+docker pull shotgunwilly555/makersvault-api:v1
+docker pull shotgunwilly555/makersvault-web:v1
+
+docker run -d --name mv-api -p 8000:8000 \
+  -e AUTH_USERNAME=admin -e AUTH_PASSWORD=super-secret \
+  shotgunwilly555/makersvault-api:v1
+docker run -d --name mv-web -p 5173:5173 \
+  -e VITE_API_URL=http://localhost:8000 \
+  shotgunwilly555/makersvault-web:v1
+
+```
+<p></p>
 <h2>Contributing</h2>
 <p>Contributions are always welcome, wether it be bug fixes or feature improvments. Any large changes, please start a disscussion first!</p>
 <h2>Feature Requests and Bug Reporting</h2>
@@ -35,7 +88,7 @@
 <h3>Other File Types</h3>
 <p>Most other file types are supported (docx, ppt, pdf, zip etc.), however these file types will not render a preview. The application is mainly made to support files that would be used for 3D printing, CAD, and artistic illuistrations. There are other projects out there that are hyperfocused on simply storing documents, those are recommended in place of Makers Vault to keep this focused and efficent at one task. If that feature is sought after please feel free to make a discussion.</p>
 <h3>Feature List</h3>
-<p>Makers Vault is intentionally kept simplistic to serve one purpouse and remain user friendly while still remaining feature rich for the purpouse it servers:</p>
+<p>Makers Vault is intentionally kept simplistic to serve one purpouse and remain user-friendly while still remaining feature rich for the purpouse it servers:</p>
 <ul>
   <li>The ability to create and delete folders.</li>
   <li>Tag any and all documents uploaded to Makers Vault.</li>
@@ -45,5 +98,5 @@
   <li>Create a username and password for added security if it is running behind a reverse proxy.</li>
   <li>Move or delete files from within the application.</li>
 </ul>
-<h3>UI and Feature Walkthrough</h3>
+<h2>UI and Feature Walkthrough</h2>
 <p>Note: For initial install and setup instructions refer to the Getting Started section.</p>
