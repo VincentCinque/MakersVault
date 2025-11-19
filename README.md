@@ -60,7 +60,33 @@ docker run -d --name mv-web -p 5173:5173 \
   shotgunwilly555/makersvault-web:v1
 
 ```
-<p></p>
+<h3>Setting up the .env file</h3>
+<p>Setting up the .env file is important to define some variables in the container. This file should be placed in the same folder as the docker-compose.yaml file and named ".env". An example of the .env file is:</p>
+
+```yaml
+FILE_STORAGE=/app/storage
+DB_URL=sqlite:///./app.db
+CORS_ORIGINS=http://localhost:5173
+VITE_API_URL=http://localhost:8000
+AUTH_USERNAME=admin
+AUTH_PASSWORD=super-secret
+AUTH_SECRET=replace-with-random-secret
+AUTH_TOKEN_TTL=43200
+```
+<p>If you plan to run the Docker container on anything other than your local machine, you will need to update the .env file appropriatley for example if your running it on a Linux server or behind a reverse proxy with a domain name:</p>
+<p>**NOTE**: If you run Makers Vault on anything but the local machine you must change CORS_ORIGINS and VITE_API_URL to the appropriate address or else you may get a "failure to fetch" error when logging in. </p>
+
+```yaml
+FILE_STORAGE=/app/storage
+DB_URL=sqlite:///./app.db
+CORS_ORIGINS=http://10.0.0.160:5173 #10.0.0.160 is just an example, use the actual IPv4 address of your server.
+VITE_API_URL=http://10.0.0.160:8000 #alternativley both CORS_ORIGIN and VITE_API_URL can be set to something like https://makersvault-local.duckdns.org if running behind a proxy.
+AUTH_USERNAME=admin #default username
+AUTH_PASSWORD=super-secret #default password
+AUTH_SECRET=replace-with-random-secret #recommended to use a generated password (random string), using a password manager. 
+AUTH_TOKEN_TTL=43200
+```
+<p>By default the username and password will be defined in the .env file - it is recommended to change these credentials to something different. All other variables set in the .env are up to user preference.</p>
 <h2>Contributing</h2>
 <p>Contributions are always welcome, wether it be bug fixes or feature improvments. Any large changes, please start a disscussion first!</p>
 <h2>Feature Requests and Bug Reporting</h2>
@@ -99,4 +125,39 @@ docker run -d --name mv-web -p 5173:5173 \
   <li>Move or delete files from within the application.</li>
 </ul>
 <h2>UI and Feature Walkthrough</h2>
-<p>Note: For initial install and setup instructions refer to the Getting Started section.</p>
+<p>**NOTE**: For initial install and setup instructions refer to the Getting Started section.</p>
+<h3>Logging in for the First Time</h3>
+<img width="1911" height="946" alt="image" src="https://github.com/user-attachments/assets/2c53c4f9-dbb2-4796-a80e-95dbbf62b3dc" />
+<p>Login utilizing the default password set in the .env file, or a custom one if set (recommended).</p>
+<h3>Landing Page/All Items</h3>
+<img width="1914" height="944" alt="image" src="https://github.com/user-attachments/assets/2a46a29f-0a3a-4281-b702-fbd8967698a6" />
+<p>Since 3D print previews may be colored differntly (black, white, red etc.), to make them more easily viewable utilize the Theme selector in the top right to toggle back and forth between light and dark mode. </p>
+<img width="1908" height="938" alt="image" src="https://github.com/user-attachments/assets/c8b41985-0fe7-4a5a-8d47-24d5895e23f4" />
+<h3>Uploading Files</h3>
+<p>Makers Vault supports single file upload and batch file upload. To upload a file click the Upload button near the top right hand corner of the screen.</p>
+<img width="1901" height="932" alt="image" src="https://github.com/user-attachments/assets/fc40995c-81d2-4af2-a380-b3d85a0608bf" />
+<p>**NOTE**: Depending on how many files/the size of the files, it can take some time to upload as well as render the 3D preview. Please be patient.</p>
+<img width="1892" height="932" alt="image" src="https://github.com/user-attachments/assets/461aefda-dbe0-4c39-99f0-32c974674c6b" />
+<p>Makers Vault utilizes a static 3D preview in the tiles in each folder, this is to prevent slow load times and potential issues caused by a large number of 3D renderings being loaded at once. To view a full 3D rendering of a specific file, double clicking on the tile will open a pop up window with a full 3D interactable render of the file. To utilize the interactive 3D render in the pop-up window, you can simply click with your mouse and rotate it as you please.</p>
+<img width="1910" height="934" alt="image" src="https://github.com/user-attachments/assets/0c464fa1-2b94-4ca5-965d-af49cd0c8a38" />
+<p>Individual files can be re-named by double clicking on the Name field in each tile. The file extension (stl, step, 3mf, etc.) will be preserved even if removed in the renaming process. </p>
+<img width="320" height="426" alt="image" src="https://github.com/user-attachments/assets/c711b258-f726-4a93-9950-09dd2261de59" />
+<h3>Tagging Files and Adding to Folders</h3>
+<p>To begin organizing files first start by clicking "New" in the top left corner. This will prompt you to create a new folder.</p>
+<img width="1898" height="940" alt="image" src="https://github.com/user-attachments/assets/731e596f-9eee-4911-b9b8-1d495faeb393" />
+<p>Once a new folder is created, you can begin to assign the files to the folder by utilizing the drop down menu within the individual files tile. Alternativley you can click on the folder and select upload at which point the uploaded file will by default be placed within that specific folder. </p>
+<img width="1890" height="935" alt="image" src="https://github.com/user-attachments/assets/8394c035-8554-4a3c-a33a-2b12c1015d0d" />
+<img width="1896" height="943" alt="image" src="https://github.com/user-attachments/assets/177a74f4-19c1-409c-974e-e5a4f64f5d01" />
+<img width="1909" height="927" alt="image" src="https://github.com/user-attachments/assets/609ff28c-dc4e-4c43-93ad-452d33e2a347" />
+
+
+
+
+
+
+
+
+
+
+
+
