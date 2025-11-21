@@ -75,6 +75,8 @@ AUTH_TOKEN_TTL=43200
 <p>If you plan to run the Docker container on anything other than your local machine, you must update the .env file accordingly. For example, if you are running Makers Vault on a Linux server or behind a reverse proxy with a domain name:</p> <p><strong>NOTE:</strong> If you run Makers Vault on anything other than the local machine, you must change <code>CORS_ORIGINS</code> and <code>VITE_API_URL</code> to the appropriate address, or you may receive a “failure to fetch” error when logging in.</p>
 
 ```yaml
+API_IMAGE=shotgunwilly555/makersvault-api:latest
+WEB_IMAGE=shotgunwilly555/makersvault-web:latest
 FILE_STORAGE=/app/storage
 DB_URL=sqlite:///./app.db
 CORS_ORIGINS=http://10.0.0.160:5173  # example - use your server's actual IP
