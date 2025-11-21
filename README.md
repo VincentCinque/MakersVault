@@ -7,7 +7,7 @@
 <img width="1902" height="882" alt="image" src="https://github.com/user-attachments/assets/2ac2f74c-481c-4bde-94ad-3c37cb95f400" />
 
 <h2>Getting Started</h2>
-<p>Makers Vault is deployable using Docker pull or docker compose:</p>
+<p>Makers Vault is deployable using Docker pull or Docker compose:</p>
 <h3>Docker Compose</h3>
 
 ```yaml
@@ -15,7 +15,7 @@ version: "3.9"
 
 services:
   api:
-    image: ${API_IMAGE:-shotgunwilly555/makersvault-api:v1}
+    image: ${API_IMAGE:-shotgunwilly555/makersvault-api:latest}
     restart: unless-stopped
     environment:
       - AUTH_USERNAME=${AUTH_USERNAME:-admin}
@@ -32,7 +32,7 @@ services:
       - "8000:8000"
 
   web:
-    image: ${WEB_IMAGE:-shotgunwilly555/makersvault-web:v1}
+    image: ${WEB_IMAGE:-shotgunwilly555/makersvault-web:latest}
     restart: unless-stopped
     environment:
       - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
@@ -49,21 +49,23 @@ volumes:
 <h3>Docker Pull</h3>
 
 ```bash
-docker pull shotgunwilly555/makersvault-api:v1
-docker pull shotgunwilly555/makersvault-web:v1
+docker pull shotgunwilly555/makersvault-api:latest
+docker pull shotgunwilly555/makersvault-web:latest
 
 docker run -d --name mv-api -p 8000:8000 \
   -e AUTH_USERNAME=admin -e AUTH_PASSWORD=super-secret \
-  shotgunwilly555/makersvault-api:v1
+  shotgunwilly555/makersvault-api:latest
 docker run -d --name mv-web -p 5173:5173 \
   -e VITE_API_URL=http://localhost:8000 \
-  shotgunwilly555/makersvault-web:v1
+  shotgunwilly555/makersvault-web:latest
 
 ```
 <h3>Setting up the .env file</h3>
-<p>Setting up the .env file is important to define some variables in the container. This file should be placed in the same folder as the docker-compose.yaml file and named ".env". An example of the .env file is:</p>
+<p>Setting up the .env file is important to define some variables in the container. This file should be placed in the same folder as the docker-compose.yml file and named ".env". An example of the .env file is:</p>
 
 ```yaml
+API_IMAGE=shotgunwilly555/makersvault-api:latest
+WEB_IMAGE=shotgunwilly555/makersvault-web:latest
 FILE_STORAGE=/app/storage
 DB_URL=sqlite:///./app.db
 CORS_ORIGINS=http://localhost:5173
@@ -79,14 +81,14 @@ AUTH_TOKEN_TTL=43200
 ```yaml
 FILE_STORAGE=/app/storage
 DB_URL=sqlite:///./app.db
-CORS_ORIGINS=http://10.0.0.160:5173 #10.0.0.160 is just an example, use the actual IPv4 address of your server.
+CORS_ORIGINS=http://10.0.0.160:5173 #10.0.0.160 is just an example, use the actual IPv4 address of your server. If using multiple seperate by commas.
 VITE_API_URL=http://10.0.0.160:8000 #alternativley both CORS_ORIGIN and VITE_API_URL can be set to something like https://makersvault-local.duckdns.org if running behind a proxy.
 AUTH_USERNAME=admin #default username
 AUTH_PASSWORD=super-secret #default password
 AUTH_SECRET=replace-with-random-secret #recommended to use a generated password (random string), using a password manager. 
-AUTH_TOKEN_TTL=43200
+AUTH_TOKEN_TTL=43200 #Once expired a re-login will be prompted.
 ```
-<p>By default the username and password will be defined in the .env file - it is recommended to change these credentials to something different. All other variables set in the .env are up to user preference.</p>
+<p>By default the username and password will be defined in the .env file - it is recommended to change these credentials to something different. All other variables set in the .env are up to user preference. When port mapping in the docker-compose, ensure that the correct port is reflected in the .env as well.</p>
 <h2>Contributing</h2>
 <p>Contributions are always welcome, wether it be bug fixes or feature improvments. Any large changes, please start a disscussion first!</p>
 <h2>Feature Requests and Bug Reporting</h2>
@@ -149,6 +151,14 @@ AUTH_TOKEN_TTL=43200
 <img width="1890" height="935" alt="image" src="https://github.com/user-attachments/assets/8394c035-8554-4a3c-a33a-2b12c1015d0d" />
 <img width="1896" height="943" alt="image" src="https://github.com/user-attachments/assets/177a74f4-19c1-409c-974e-e5a4f64f5d01" />
 <img width="1909" height="927" alt="image" src="https://github.com/user-attachments/assets/609ff28c-dc4e-4c43-93ad-452d33e2a347" />
+<p>When taking files, using a comma will close the current tag and allow for more to be added. Example: "3D Print," will make "3D Print" an active tag and allow for the next to be typed. </p>
+<img width="1896" height="940" alt="image" src="https://github.com/user-attachments/assets/67ab01c9-1fd4-4a32-9613-7e36d978f245" />
+<p>To sort by tags, simply click the relevant tab near the top and only files with that specific tag will be displayed. The sorting function next to the search bar allows for sorting by name, size, file type and folder.</p>
+<img width="1911" height="939" alt="image" src="https://github.com/user-attachments/assets/ead40d63-b019-4f99-8daa-79c488b535c3" />
+<img width="1912" height="925" alt="image" src="https://github.com/user-attachments/assets/8bf49efc-a110-4122-8669-6c8cbde4b6cf" />
+
+
+
 
 
 
