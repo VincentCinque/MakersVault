@@ -137,22 +137,25 @@ export default function ModelViewer({ url, ext, assetId }: ModelViewerProps) {
       animate();
     })();
 
-    return () => {
-      disposed = true;
-      try {
-        teardown?.();
-        mount.removeChild(renderer.domElement);
-      } catch {}
-      if (activeObject) {
-        disposeObject3D(activeObject);
-      }
-      try {
-        controls?.removeEventListener("change", saveView);
-        controls?.dispose();
-      } catch {}
-      renderer.dispose();
-    };
-  }, [url, ext, assetId]);
+  return () => {
+    disposed = true;
+    try {
+      teardown?.();
+      mount.removeChild(renderer.domElement);
+    } catch {}
+    if (activeObject) {
+      disposeObject3D(activeObject);
+    }
+    try {
+      controls?.removeEventListener("change", saveView);
+      controls?.dispose();
+    } catch {}
+    try {
+      renderer.forceContextLoss?.();
+    } catch {}
+    renderer.dispose();
+  };
+}, [url, ext, assetId]);
 
   return (
     <div
@@ -171,6 +174,36 @@ export default function ModelViewer({ url, ext, assetId }: ModelViewerProps) {
 type SnapshotState = "idle" | "loading" | "error";
 
 const snapshotCache = new Map<string, string>();
+let snapshotRenderer: THREE.WebGLRenderer | null = null;
+let snapshotLock: Promise<void> = Promise.resolve();
+
+function createSnapshotRenderer() {
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true,
+    preserveDrawingBuffer: true,
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  return renderer;
+}
+
+async function acquireSnapshotRenderer() {
+  let release!: () => void;
+  const wait = snapshotLock;
+  snapshotLock = snapshotLock.then(() => new Promise<void>(resolve => (release = resolve)));
+  await wait;
+  snapshotRenderer = createSnapshotRenderer();
+  const renderer = snapshotRenderer;
+  const unlock = () => {
+    try {
+      renderer.forceContextLoss?.();
+      renderer.dispose();
+    } catch {}
+    snapshotRenderer = null;
+    release();
+  };
+  return { renderer, release: unlock };
+}
 
 export function ModelSnapshot({ url, ext, assetId }: ModelViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -576,11 +609,7 @@ async function generateModelSnapshot(url: string, ext: string, width: number, he
   scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
   scene.add(new THREE.AmbientLight(0xffffff, 0.8));
   const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-  const renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    alpha: true,
-    preserveDrawingBuffer: true,
-  });
+  const { renderer, release } = await acquireSnapshotRenderer();
   renderer.setSize(width, height, false);
   scene.add(object);
 
@@ -596,11 +625,14 @@ async function generateModelSnapshot(url: string, ext: string, width: number, he
     camera.lookAt(new THREE.Vector3(0, 0, 0));
   }
 
-  renderer.render(scene, camera);
-  const dataUrl = renderer.domElement.toDataURL("image/png");
-  disposeObject3D(object);
-  renderer.dispose();
-  return dataUrl;
+  try {
+    renderer.render(scene, camera);
+    const dataUrl = renderer.domElement.toDataURL("image/png");
+    disposeObject3D(object);
+    return dataUrl;
+  } finally {
+    release();
+  }
 }
 
 async function loadObjectFromAsset(ext: string, url: string): Promise<THREE.Object3D | null> {
