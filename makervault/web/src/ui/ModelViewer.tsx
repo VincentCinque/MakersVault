@@ -233,12 +233,25 @@ type Simple3MFMesh = {
 type Simple3MFComponent = {
   objectId: string;
   transform?: THREE.Matrix4 | null;
+  sourcePath?: string | null;
+};
+
+type Simple3MFBuildItem = {
+  objectId: string;
+  transform?: THREE.Matrix4 | null;
+  sourcePath?: string | null;
 };
 
 type Simple3MFObject = {
   id: string;
   mesh?: Simple3MFMesh;
   components?: Simple3MFComponent[];
+};
+
+type Simple3MFDocument = {
+  path: string;
+  objects: Map<string, Simple3MFObject>;
+  buildItems: Simple3MFBuildItem[];
 };
 
 type NamespacedNode = {
@@ -252,14 +265,14 @@ async function loadSimple3MFGroup(url: string): Promise<THREE.Group> {
   }
   const raw = new Uint8Array(await resp.arrayBuffer());
   const decoder = new TextDecoder();
-  const groups: THREE.Group[] = [];
+  const documents = new Map<string, Simple3MFDocument>();
 
-  const enqueueParse = (label: string, data: Uint8Array | string) => {
+  const enqueueDocument = (label: string, data: Uint8Array | string) => {
     const xml = typeof data === "string" ? data : decoder.decode(data);
     try {
-      const group = buildSimple3MFGroup(xml);
-      if (group.children.length) {
-        groups.push(group);
+      const doc = buildSimple3MFDocument(xml, label);
+      if (doc.objects.size || doc.buildItems.length) {
+        documents.set(doc.path, doc);
       }
     } catch (err) {
       console.warn(`3MF fallback parse failed for ${label}`, err);
@@ -274,7 +287,7 @@ async function loadSimple3MFGroup(url: string): Promise<THREE.Group> {
     if (modelEntries.length) {
       archiveParsed = true;
       for (const entry of modelEntries) {
-        enqueueParse(entry, zipEntries[entry]);
+        enqueueDocument(entry, zipEntries[entry]);
       }
     }
   } catch (err) {
@@ -282,27 +295,107 @@ async function loadSimple3MFGroup(url: string): Promise<THREE.Group> {
   }
 
   if (!archiveParsed) {
-    enqueueParse("inline", raw);
+    enqueueDocument("/3D/3dmodel.model", raw);
   }
 
-  if (!groups.length) {
+  if (!documents.size) {
     throw new Error("3MF fallback: no printable geometry found");
   }
 
-  const root = new THREE.Group();
-  for (const group of groups) {
-    root.add(group);
+  const root = buildSceneFromDocuments(documents);
+  if (!root.children.length) {
+    throw new Error("3MF fallback: no printable geometry found");
   }
   return root;
 }
 
-function buildSimple3MFGroup(xml: string): THREE.Group {
+function buildSceneFromDocuments(documents: Map<string, Simple3MFDocument>): THREE.Group {
+  const root = new THREE.Group();
+  const cache = new Map<string, THREE.Object3D>();
+
+  const instantiateFromDoc = (
+    docPath: string,
+    objectId: string,
+    stack: Set<string>
+  ): THREE.Object3D | null => {
+    const normalizedPath = normalizeModelPath(docPath);
+    const cacheKey = `${normalizedPath}::${objectId}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return cached.clone(true);
+    }
+    const doc = documents.get(normalizedPath);
+    if (!doc) {
+      return null;
+    }
+    if (stack.has(cacheKey)) {
+      console.warn("3MF fallback: detected recursive reference for %s", cacheKey);
+      return null;
+    }
+    stack.add(cacheKey);
+    const data = doc.objects.get(objectId);
+    if (!data) {
+      stack.delete(cacheKey);
+      return null;
+    }
+
+    let created: THREE.Object3D | null = null;
+    if (data.mesh) {
+      created = meshToThreeObject(data.mesh);
+    } else if (data.components?.length) {
+      const group = new THREE.Group();
+      for (const component of data.components) {
+        const child = instantiateFromDoc(
+          component.sourcePath ?? doc.path,
+          component.objectId,
+          stack
+        );
+        if (!child) continue;
+        if (component.transform) {
+          child.applyMatrix4(component.transform.clone());
+        }
+        group.add(child);
+      }
+      created = group;
+    }
+    stack.delete(cacheKey);
+
+    if (!created) return null;
+    cache.set(cacheKey, created);
+    return created.clone(true);
+  };
+
+  for (const doc of documents.values()) {
+    if (!doc.buildItems.length) continue;
+    const docGroup = new THREE.Group();
+    for (const item of doc.buildItems) {
+      const built = instantiateFromDoc(
+        item.sourcePath ?? doc.path,
+        item.objectId,
+        new Set<string>()
+      );
+      if (!built) continue;
+      if (item.transform) {
+        built.applyMatrix4(item.transform.clone());
+      }
+      docGroup.add(built);
+    }
+    if (docGroup.children.length) {
+      root.add(docGroup);
+    }
+  }
+
+  return root;
+}
+
+function buildSimple3MFDocument(xml: string, label: string): Simple3MFDocument {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xml, "application/xml");
   if (doc.querySelector("parsererror")) {
     throw new Error("3MF fallback: invalid XML");
   }
 
+  const path = normalizeModelPath(label);
   const objects = new Map<string, Simple3MFObject>();
   for (const objectNode of findElements(doc, "object")) {
     const id = objectNode.getAttribute("id");
@@ -322,66 +415,20 @@ function buildSimple3MFGroup(xml: string): THREE.Group {
   }
 
   const buildNode = findFirstElement(doc, "build");
-  if (!buildNode) {
-    throw new Error("3MF fallback: missing build node");
-  }
-  const items = findElements(buildNode, "item");
-  const root = new THREE.Group();
-  const cache = new Map<string, THREE.Object3D>();
+  const buildItems = buildNode ? parseSimple3MFBuildItems(buildNode) : [];
+  return { path, objects, buildItems };
+}
 
-  const instantiate = (objectId: string): THREE.Object3D | null => {
-    const cached = cache.get(objectId);
-    if (cached) return cached.clone(true);
-    const data = objects.get(objectId);
-    if (!data) return null;
-
-    let created: THREE.Object3D | null = null;
-    if (data.mesh) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(data.mesh.positions, 3));
-      geometry.setIndex(new THREE.BufferAttribute(data.mesh.indices, 1));
-      geometry.computeVertexNormals();
-      geometry.computeBoundingSphere();
-      created = new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({ color: 0xf1f5f9, metalness: 0.2, roughness: 0.8 })
-      );
-    } else if (data.components?.length) {
-      const group = new THREE.Group();
-      for (const component of data.components) {
-        const child = instantiate(component.objectId);
-        if (!child) continue;
-        if (component.transform) {
-          child.applyMatrix4(component.transform.clone());
-        }
-        group.add(child);
-      }
-      created = group;
-    }
-
-    if (!created) return null;
-    cache.set(objectId, created);
-    return created.clone(true);
-  };
-
-  for (const item of items) {
-    const objectId = item.getAttribute("objectid");
-    if (!objectId) continue;
-    const built = instantiate(objectId);
-    if (!built) continue;
-    const transformAttr = item.getAttribute("transform");
-    if (transformAttr) {
-      const matrix = parse3MFMatrix(transformAttr);
-      if (matrix) built.applyMatrix4(matrix);
-    }
-    root.add(built);
-  }
-
-  if (!root.children.length) {
-    throw new Error("3MF fallback: no printable components found");
-  }
-
-  return root;
+function meshToThreeObject(mesh: Simple3MFMesh): THREE.Mesh {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+  geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ color: 0xf1f5f9, metalness: 0.2, roughness: 0.8 })
+  );
 }
 
 function parseSimple3MFMesh(meshNode: Element): Simple3MFMesh | null {
@@ -412,12 +459,30 @@ function parseSimple3MFComponents(node: Element): Simple3MFComponent[] {
     const objectId = componentNode.getAttribute("objectid");
     if (!objectId) continue;
     const transformAttr = componentNode.getAttribute("transform");
+    const pathAttr = getAttributeByLocalName(componentNode, "path");
     components.push({
       objectId,
       transform: transformAttr ? parse3MFMatrix(transformAttr) : undefined,
+      sourcePath: pathAttr ? normalizeModelPath(pathAttr) : undefined,
     });
   }
   return components;
+}
+
+function parseSimple3MFBuildItems(node: Element): Simple3MFBuildItem[] {
+  const items: Simple3MFBuildItem[] = [];
+  for (const itemNode of findElements(node, "item")) {
+    const objectId = itemNode.getAttribute("objectid");
+    if (!objectId) continue;
+    const transformAttr = itemNode.getAttribute("transform");
+    const pathAttr = getAttributeByLocalName(itemNode, "path");
+    items.push({
+      objectId,
+      transform: transformAttr ? parse3MFMatrix(transformAttr) : undefined,
+      sourcePath: pathAttr ? normalizeModelPath(pathAttr) : undefined,
+    });
+  }
+  return items;
 }
 
 function parse3MFMatrix(transform: string): THREE.Matrix4 | null {
@@ -447,6 +512,44 @@ function parse3MFMatrix(transform: string): THREE.Matrix4 | null {
     1
   );
   return matrix;
+}
+
+function getAttributeByLocalName(node: Element, localName: string): string | null {
+  const direct = node.getAttribute(localName);
+  if (direct !== null) {
+    return direct;
+  }
+  if (typeof node.getAttributeNames === "function") {
+    for (const attrName of node.getAttributeNames()) {
+      const idx = attrName.indexOf(":");
+      if (idx === -1) continue;
+      if (attrName.slice(idx + 1) === localName) {
+        const value = node.getAttribute(attrName);
+        if (value !== null) {
+          return value;
+        }
+      }
+    }
+  } else {
+    for (const prefix of ["p", "m", "s"]) {
+      const fallback = node.getAttribute(`${prefix}:${localName}`);
+      if (fallback !== null) {
+        return fallback;
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeModelPath(path: string): string {
+  const trimmed = (path || "").trim();
+  if (!trimmed) return "/3D/3dmodel.model";
+  let normalized = trimmed.replace(/\\/g, "/");
+  normalized = normalized.replace(/^\/+/, "/");
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  return normalized;
 }
 
 function findElements(node: Document | Element, localName: string) {

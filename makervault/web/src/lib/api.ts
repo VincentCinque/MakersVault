@@ -1,5 +1,21 @@
 import { appendTokenToUrl, authHeaders } from "./auth";
 
+export class UnauthorizedError extends Error {
+  constructor(message = "Unauthorized") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+function assertOk(res: Response, message: string) {
+  if (res.status === 401) {
+    throw new UnauthorizedError();
+  }
+  if (!res.ok) {
+    throw new Error(message);
+  }
+}
+
 export type Asset = {
   id: string;
   filename: string;
@@ -39,7 +55,7 @@ export async function listAssets(params: { q?: string; tags?: string[]; folder_i
   const res = await fetch(`${API}/assets?${qs.toString()}`, {
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error("Failed to list assets");
+  assertOk(res, "Failed to list assets");
   return res.json();
 }
 
@@ -59,7 +75,7 @@ export async function uploadAsset(
     body: fd,
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error("Upload failed");
+  assertOk(res, "Upload failed");
   return res.json();
 }
 
@@ -69,7 +85,7 @@ export async function setTags(id: string, tags: string[]) {
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ tags }),
   });
-  if (!res.ok) throw new Error("Tag update failed");
+  assertOk(res, "Tag update failed");
   return res.json();
 }
 
@@ -79,13 +95,13 @@ export async function updateAssetMeta(id: string, payload: { title?: string | nu
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error("Metadata update failed");
+  assertOk(res, "Metadata update failed");
   return res.json();
 }
 
 export async function deleteAsset(id: string) {
   const res = await fetch(`${API}/asset/${id}`, { method: "DELETE", headers: authHeaders() });
-  if (!res.ok) throw new Error("Delete asset failed");
+  assertOk(res, "Delete asset failed");
   return res.json();
 }
 
@@ -95,7 +111,7 @@ export async function renameAsset(id: string, filename: string) {
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ filename }),
   });
-  if (!res.ok) throw new Error("Rename failed");
+  assertOk(res, "Rename failed");
   return res.json();
 }
 
@@ -105,7 +121,7 @@ export async function updateAssetFolder(id: string, folder_id: string | null) {
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ folder_id }),
   });
-  if (!res.ok) throw new Error("Folder update failed");
+  assertOk(res, "Folder update failed");
   return res.json();
 }
 
@@ -121,7 +137,7 @@ export type Folder = { id: string; name: string; tags: string[] };
 
 export async function listFolders(): Promise<Folder[]> {
   const res = await fetch(`${API}/folders`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("Failed to list folders");
+  assertOk(res, "Failed to list folders");
   return res.json();
 }
 
@@ -131,7 +147,7 @@ export async function createFolder(name: string, tags: string[] = []) {
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ name, tags }),
   });
-  if (!res.ok) throw new Error("Create folder failed");
+  assertOk(res, "Create folder failed");
   return res.json();
 }
 
@@ -141,14 +157,30 @@ export async function updateFolder(id: string, name: string, tags: string[]) {
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ name, tags }),
   });
-  if (!res.ok) throw new Error("Update folder failed");
+  assertOk(res, "Update folder failed");
   return res.json();
 }
 
 export async function deleteFolder(id: string) {
   const res = await fetch(`${API}/folder/${id}`, { method: "DELETE", headers: authHeaders() });
-  if (!res.ok) throw new Error("Delete folder failed");
+  assertOk(res, "Delete folder failed");
   return res.json();
+}
+
+export async function downloadZip(opts: { asset_ids?: string[]; tag?: string; folder_id?: string; filename?: string }) {
+  const res = await fetch(`${API}/download/zip`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(opts),
+  });
+  assertOk(res, "Download failed");
+  return res;
+}
+
+export async function downloadFolderZip(folder_id: string) {
+  const res = await fetch(`${API}/folder/${folder_id}/download`, { headers: authHeaders() });
+  assertOk(res, "Folder download failed");
+  return res;
 }
 
 export type HealthInfo = { ok: boolean; auth_required: boolean };
@@ -185,5 +217,14 @@ export async function login(username: string, password: string): Promise<{ token
     }
     throw new Error(message);
   }
+  return res.json();
+}
+
+export async function refreshToken(): Promise<{ token: string; expires_in: number }> {
+  const res = await fetch(`${API}/refresh`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  assertOk(res, "Token refresh failed");
   return res.json();
 }

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Asset,
   Folder,
+  UnauthorizedError,
   deleteAsset,
   fileUrl,
   listAssets,
@@ -10,6 +11,7 @@ import {
   setTags,
   updateAssetFolder,
   updateAssetMeta,
+  downloadZip,
 } from "../lib/api";
 import ModelViewer, { ModelSnapshot } from "./ModelViewer";
 import TagBadge from "./TagBadge";
@@ -21,12 +23,12 @@ function extOf(name: string) {
   return (m?.[1] || "").toLowerCase();
 }
 
-type Props = { folderId?: string | null };
+type Props = { folderId?: string | null; foldersVersion?: number; onUnauthorized?: () => void };
 
 type RefreshOpts = { tags?: string[]; search?: string };
 type GroupBucket = { id: string; title: string; items: Asset[] };
 
-export default function AssetGrid({ folderId }: Props) {
+export default function AssetGrid({ folderId, foldersVersion = 0, onUnauthorized }: Props) {
   const [items, setItems] = useState<Asset[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -39,6 +41,18 @@ export default function AssetGrid({ folderId }: Props) {
   const [movingId, setMovingId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<"name" | "size" | "type" | "folder">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDownloading, setBulkDownloading] = useState<string | null>(null);
+
+  const handleApiError = (err: unknown, message?: string) => {
+    if (err instanceof UnauthorizedError) {
+      onUnauthorized?.();
+      return true;
+    }
+    console.error(err);
+    if (message) alert(message);
+    return false;
+  };
 
   const refresh = async (opts: RefreshOpts = {}) => {
     setLoading(true);
@@ -49,6 +63,8 @@ export default function AssetGrid({ folderId }: Props) {
         folder_id: folderId || undefined,
       });
       setItems(data);
+    } catch (err) {
+      handleApiError(err, "Failed to load assets. Please sign in again or refresh.");
     } finally {
       setLoading(false);
     }
@@ -60,10 +76,15 @@ export default function AssetGrid({ folderId }: Props) {
       try {
         setFolders(await listFolders());
       } catch (err) {
-        console.error("Failed to load folders", err);
+        handleApiError(err, "Failed to load folders. Please refresh.");
       }
     })();
-  }, []);
+  }, [foldersVersion]);
+
+  useEffect(() => {
+    const present = new Set(items.map(i => i.id));
+    setSelectedIds(prev => new Set([...prev].filter(id => present.has(id))));
+  }, [items]);
 
   const allTags = useMemo(() => {
     const t = new Set<string>();
@@ -169,19 +190,59 @@ export default function AssetGrid({ folderId }: Props) {
     });
   };
 
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const filenameFromDisposition = (res: Response, fallback: string) => {
+    const dispo = res.headers.get("content-disposition") || "";
+    const match = dispo.match(/filename="?([^\";]+)"?/i);
+    return (match && match[1]) || fallback || "download";
+  };
+
+  const saveResponseToDisk = async (res: Response, fallback: string) => {
+    const filename = filenameFromDisposition(res, fallback);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  };
+
   const onSaveTags = async (id: string, tags: string[]) => {
-    await setTags(id, tags);
-    await refresh();
+    try {
+      await setTags(id, tags);
+      await refresh();
+    } catch (err) {
+      handleApiError(err, "Tag update failed. Please try again.");
+    }
   };
 
   const onSaveNotes = async (id: string, notes: string) => {
-    await updateAssetMeta(id, { notes });
-    await refresh();
+    try {
+      await updateAssetMeta(id, { notes });
+      await refresh();
+    } catch (err) {
+      handleApiError(err, "Failed to save notes. Please try again.");
+    }
   };
 
   const onRename = async (id: string, filename: string) => {
-    await renameAsset(id, filename);
-    await refresh();
+    try {
+      await renameAsset(id, filename);
+      await refresh();
+    } catch (err) {
+      handleApiError(err, "Rename failed. Please try again.");
+    }
   };
 
   const onMoveFolder = async (id: string, folder_id: string | null) => {
@@ -190,8 +251,9 @@ export default function AssetGrid({ folderId }: Props) {
       await updateAssetFolder(id, folder_id);
       await refresh();
     } catch (err) {
-      console.error(err);
-      alert("Folder update failed. Please try again.");
+      if (!handleApiError(err)) {
+        alert("Folder update failed. Please try again.");
+      }
     } finally {
       setMovingId(null);
     }
@@ -201,21 +263,52 @@ export default function AssetGrid({ folderId }: Props) {
     try {
       setDownloadingId(asset.id);
       const res = await fetch(fileUrl(asset.url));
+      if (res.status === 401) {
+        onUnauthorized?.();
+        throw new Error("Unauthorized");
+      }
       if (!res.ok) throw new Error("Download failed");
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = asset.filename || "download";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
+      await saveResponseToDisk(res, asset.filename || "download");
     } catch (err) {
-      console.error(err);
-      alert("Download failed. Please try again.");
+      if (!handleApiError(err)) {
+        console.error(err);
+        alert("Download failed. Please try again.");
+      }
     } finally {
       setDownloadingId(null);
+    }
+  };
+
+  const downloadSelected = async () => {
+    if (!selectedIds.size) {
+      alert("Select at least one item to download.");
+      return;
+    }
+    try {
+      setBulkDownloading("selected");
+      const res = await downloadZip({ asset_ids: Array.from(selectedIds) });
+      await saveResponseToDisk(res, "makersvault-selected.zip");
+    } catch (err) {
+      if (!handleApiError(err, "Bulk download failed.")) {
+        console.error(err);
+      }
+    } finally {
+      setBulkDownloading(null);
+    }
+  };
+
+  const downloadByTag = async (tag: string) => {
+    if (!tag) return;
+    try {
+      setBulkDownloading(`tag:${tag}`);
+      const res = await downloadZip({ tag });
+      await saveResponseToDisk(res, `${tag}.zip`);
+    } catch (err) {
+      if (!handleApiError(err, "Download by tag failed.")) {
+        console.error(err);
+      }
+    } finally {
+      setBulkDownloading(null);
     }
   };
 
@@ -228,8 +321,9 @@ export default function AssetGrid({ folderId }: Props) {
       await deleteAsset(asset.id);
       await refresh();
     } catch (err) {
-      console.error(err);
-      alert("Delete failed. Please try again.");
+      if (!handleApiError(err)) {
+        alert("Delete failed. Please try again.");
+      }
     } finally {
       setDeletingId(null);
     }
@@ -247,7 +341,7 @@ export default function AssetGrid({ folderId }: Props) {
               refresh({ search: val });
             }
           }}
-          placeholder="Search title, filename, notes…"
+          placeholder="Search title, filename, notes..."
           className="px-3 py-2 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white/70 dark:bg-neutral-900/70 w-80"
         />
         <button
@@ -257,7 +351,7 @@ export default function AssetGrid({ folderId }: Props) {
         >
           Search
         </button>
-        {loading && <span className="text-sm opacity-70">Loading…</span>}
+        {loading && <span className="text-sm opacity-70">Loading...</span>}
         <div className="flex items-center gap-2 text-sm">
           <span className="opacity-70">Sort</span>
           <select
@@ -343,13 +437,19 @@ export default function AssetGrid({ folderId }: Props) {
                             onSaveNotes={onSaveNotes}
                             onRename={onRename}
                             onPreview={setPreviewItem}
-                            onDownload={downloadAsset}
+                            onDownloadSingle={downloadAsset}
                             downloading={downloadingId === it.id}
                             onDelete={removeAsset}
                             deleting={deletingId === it.id}
                             onMoveFolder={onMoveFolder}
                             folderOptions={folderOptions}
                             moving={movingId === it.id}
+                            onDownloadByTag={downloadByTag}
+                            onDownloadSelected={downloadSelected}
+                            selected={selectedIds.has(it.id)}
+                            onToggleSelected={() => toggleSelected(it.id)}
+                            hasSelection={selectedIds.size > 0}
+                            bulkDownloading={Boolean(bulkDownloading)}
                           />
                         </div>
                       ))}
@@ -373,13 +473,19 @@ export default function AssetGrid({ folderId }: Props) {
               onSaveNotes={onSaveNotes}
               onRename={onRename}
               onPreview={setPreviewItem}
-              onDownload={downloadAsset}
+              onDownloadSingle={downloadAsset}
               downloading={downloadingId === it.id}
               onDelete={removeAsset}
               deleting={deletingId === it.id}
               onMoveFolder={onMoveFolder}
               folderOptions={folderOptions}
               moving={movingId === it.id}
+              onDownloadByTag={downloadByTag}
+              onDownloadSelected={downloadSelected}
+              selected={selectedIds.has(it.id)}
+              onToggleSelected={() => toggleSelected(it.id)}
+              hasSelection={selectedIds.size > 0}
+              bulkDownloading={Boolean(bulkDownloading)}
             />
           ))}
         </div>
@@ -398,26 +504,38 @@ function AssetCard({
   onSaveNotes,
   onRename,
   onPreview,
-  onDownload,
+  onDownloadSingle,
+  onDownloadByTag,
+  onDownloadSelected,
   downloading,
   onDelete,
   deleting,
   onMoveFolder,
   folderOptions,
   moving,
+  selected,
+  onToggleSelected,
+  hasSelection,
+  bulkDownloading,
 }: {
   item: Asset;
   onSaveTags: (id: string, tags: string[]) => void;
   onSaveNotes: (id: string, notes: string) => void;
   onRename: (id: string, filename: string) => void;
   onPreview: (asset: Asset | null) => void;
-  onDownload: (asset: Asset) => void;
+  onDownloadSingle: (asset: Asset) => void;
+  onDownloadByTag: (tag: string) => void;
+  onDownloadSelected: () => void;
   downloading: boolean;
   onDelete: (asset: Asset) => void;
   deleting: boolean;
   onMoveFolder: (id: string, folder_id: string | null) => void;
   folderOptions: { id: string | null; name: string }[];
   moving: boolean;
+  selected: boolean;
+  onToggleSelected: () => void;
+  hasSelection: boolean;
+  bulkDownloading: boolean;
 }) {
   const [editingTags, setEditingTags] = useState(false);
   const [tagList, setTagList] = useState<string[]>(item.tags);
@@ -427,6 +545,7 @@ function AssetCard({
   const [renaming, setRenaming] = useState(false);
   const [nameValue, setNameValue] = useState(item.filename);
   const nameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [downloadChoice, setDownloadChoice] = useState("");
 
   useEffect(() => {
     if (!editingTags) {
@@ -519,6 +638,19 @@ function AssetCard({
     onMoveFolder(item.id, next);
   };
 
+  const handleDownloadChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    if (!val) return;
+    setDownloadChoice("");
+    if (val === "single") {
+      onDownloadSingle(item);
+    } else if (val === "selected") {
+      onDownloadSelected();
+    } else if (val.startsWith("tag:")) {
+      onDownloadByTag(val.slice(4));
+    }
+  };
+
   return (
     <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden bg-white/60 dark:bg-neutral-900/60">
       <div
@@ -530,9 +662,38 @@ function AssetCard({
         {renderPreviewContent(item, "card")}
       </div>
       <div className="p-3 flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={onToggleSelected}
+              className="w-4 h-4"
+            />
+            <span>Select</span>
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              value={downloadChoice}
+              onChange={handleDownloadChange}
+              disabled={downloading || bulkDownloading}
+              className="px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm"
+            >
+              <option value="">Download...</option>
+              <option value="single">Download file</option>
+              <option value="selected" disabled={!hasSelection}>Download all selected</option>
+              {item.tags.map(t => (
+                <option key={`tag-${t}`} value={`tag:${t}`}>Download tag: {t}</option>
+              ))}
+            </select>
+            {(downloading || bulkDownloading) && (
+              <span className="text-xs opacity-70">{downloading ? "Downloading..." : "Preparing..."}</span>
+            )}
+          </div>
+        </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
-            {moving ? "Updating…" : "Folder"}
+            {moving ? "Updating..." : "Folder"}
           </label>
           <select
             value={item.folder_id || ""}
@@ -617,7 +778,7 @@ function AssetCard({
           )}
           {notesCollapsed && (
             <div className={`text-sm ${noteText ? "text-neutral-700 dark:text-neutral-200" : "opacity-60"}`}>
-              {noteText ? `${noteText.slice(0, 60)}${noteText.length > 60 ? "…" : ""}` : "No notes"}
+              {noteText ? `${noteText.slice(0, 60)}${noteText.length > 60 ? "..." : ""}` : "No notes"}
             </div>
           )}
         </div>
@@ -638,18 +799,11 @@ function AssetCard({
           <div className="flex items-center gap-2 flex-wrap">
             <button className="text-sm px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700" onClick={startEditing}>Edit tags</button>
             <button
-              className="text-sm px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-60"
-              onClick={() => onDownload(item)}
-              disabled={downloading}
-            >
-              {downloading ? "Downloading…" : "Download"}
-            </button>
-            <button
               className="text-sm px-2 py-1 rounded-md border border-red-300 text-red-700 dark:text-red-300 disabled:opacity-60"
               onClick={() => onDelete(item)}
               disabled={deleting}
             >
-              {deleting ? "Deleting…" : "Delete"}
+              {deleting ? "Deleting..." : "Delete"}
             </button>
           </div>
         )}

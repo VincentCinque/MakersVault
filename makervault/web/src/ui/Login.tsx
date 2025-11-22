@@ -2,7 +2,7 @@ import React from "react";
 import { login } from "../lib/api";
 
 type Props = {
-  onSuccess: (token: string) => void;
+  onSuccess: (token: string, expires_in: number) => void;
   apiUp: boolean | null;
 };
 
@@ -18,7 +18,7 @@ export default function Login({ onSuccess, apiUp }: Props) {
     setLoading(true);
     try {
       const res = await login(username, password);
-      onSuccess(res.token);
+      onSuccess(res.token, res.expires_in);
     } catch (err) {
       console.error(err);
       if (err instanceof Error) {

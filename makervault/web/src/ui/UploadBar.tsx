@@ -1,9 +1,9 @@
 import React, { useRef, useState } from "react";
-import { uploadAsset } from "../lib/api";
+import { UnauthorizedError, uploadAsset } from "../lib/api";
 
-type Props = { onUploaded: () => void; folderId?: string | null };
+type Props = { onUploaded: () => void; folderId?: string | null; onUnauthorized?: () => void };
 
-export default function UploadBar({ onUploaded, folderId }: Props) {
+export default function UploadBar({ onUploaded, folderId, onUnauthorized }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -18,6 +18,10 @@ export default function UploadBar({ onUploaded, folderId }: Props) {
         await uploadAsset(file, { folder_id: folderId || undefined });
         success += 1;
       } catch (err) {
+        if (err instanceof UnauthorizedError) {
+          onUnauthorized?.();
+          break;
+        }
         console.error("Upload failed for", file.name, err);
         failed.push(file.name);
       }

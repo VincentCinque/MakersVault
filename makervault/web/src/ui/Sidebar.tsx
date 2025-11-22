@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from "react";
-import { Folder, createFolder, deleteFolder, listFolders, updateFolder } from "../lib/api";
+import { Folder, UnauthorizedError, createFolder, deleteFolder, downloadFolderZip, listFolders, updateFolder } from "../lib/api";
 import TagInput from "./TagInput";
 
 type Props = {
   selectedId?: string | null;
   onSelect: (id: string | null) => void;
+  onFoldersChanged?: () => void;
+  onUnauthorized?: () => void;
 };
 
-export default function Sidebar({ selectedId, onSelect }: Props) {
+export default function Sidebar({ selectedId, onSelect, onFoldersChanged, onUnauthorized }: Props) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -16,7 +18,41 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
   const [editName, setEditName] = useState("");
   const [editTags, setEditTags] = useState<string[]>([]);
 
-  const refresh = async () => setFolders(await listFolders());
+  const filenameFromDisposition = (res: Response, fallback: string) => {
+    const dispo = res.headers.get("content-disposition") || "";
+    const match = dispo.match(/filename="?([^\";]+)"?/i);
+    return (match && match[1]) || fallback;
+  };
+
+  const saveResponseToDisk = async (res: Response, fallback: string) => {
+    const filename = filenameFromDisposition(res, fallback);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleError = (err: unknown, message: string) => {
+    if (err instanceof UnauthorizedError) {
+      onUnauthorized?.();
+      return;
+    }
+    console.error(err);
+    alert(message);
+  };
+
+  const refresh = async () => {
+    try {
+      setFolders(await listFolders());
+    } catch (err) {
+      handleError(err, "Unable to load folders.");
+    }
+  };
   useEffect(() => { refresh(); }, []);
 
   const startCreate = () => { setCreating(true); setNewName(""); };
@@ -26,6 +62,9 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
     try {
       await createFolder(newName.trim());
       await refresh();
+      onFoldersChanged?.();
+    } catch (err) {
+      handleError(err, "Folder creation failed. Please try again.");
     } finally { setBusy(false); setCreating(false); }
   };
 
@@ -40,14 +79,38 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
     try {
       await updateFolder(editing, editName.trim() || "Untitled", editTags);
       await refresh();
+      onFoldersChanged?.();
+    } catch (err) {
+      handleError(err, "Folder update failed. Please try again.");
     } finally { setBusy(false); setEditing(null); setEditTags([]); }
   };
 
   const remove = async (id: string) => {
     if (!confirm("Delete folder? (Assets remain but become unassigned)")) return;
     setBusy(true);
-    try { await deleteFolder(id); await refresh(); if (selectedId === id) onSelect(null); }
+    try {
+      await deleteFolder(id);
+      await refresh();
+      onFoldersChanged?.();
+      if (selectedId === id) onSelect(null);
+    }
+    catch (err) {
+      handleError(err, "Failed to delete folder.");
+    }
     finally { setBusy(false); }
+  };
+
+  const downloadFolder = async (folder: Folder) => {
+    setBusy(true);
+    try {
+      const res = await downloadFolderZip(folder.id);
+      const safe = (folder.name || "folder").replace(/\s+/g, "_") || "folder";
+      await saveResponseToDisk(res, `${safe}.zip`);
+    } catch (err) {
+      handleError(err, "Unable to download folder.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -69,8 +132,9 @@ export default function Sidebar({ selectedId, onSelect }: Props) {
           <div key={f.id} className={`rounded-md ${selectedId===f.id ? 'bg-emerald-50 dark:bg-neutral-800' : ''}`}>
             <div className="flex items-center gap-2 px-2 py-1">
               <button className="flex-1 text-left truncate" onClick={()=>onSelect(f.id)} title={f.name}>{f.name}</button>
-              <button className="text-xs px-1.5 py-0.5 rounded border" onClick={()=>startEdit(f)}>Edit</button>
-              <button className="text-xs px-1.5 py-0.5 rounded border" onClick={()=>remove(f.id)}>Del</button>
+              <button className="text-xs px-1.5 py-0.5 rounded border disabled:opacity-60" disabled={busy} onClick={()=>downloadFolder(f)}>Zip</button>
+              <button className="text-xs px-1.5 py-0.5 rounded border disabled:opacity-60" disabled={busy} onClick={()=>startEdit(f)}>Edit</button>
+              <button className="text-xs px-1.5 py-0.5 rounded border disabled:opacity-60" disabled={busy} onClick={()=>remove(f.id)}>Del</button>
             </div>
           </div>
         ))}

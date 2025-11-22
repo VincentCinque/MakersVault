@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  api:
+    image: ${API_IMAGE:-shotgunwilly555/makersvault-api:v1}
+    restart: unless-stopped
+    environment:
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-super-secret}
+      - AUTH_SECRET=${AUTH_SECRET:-changeme-secret}
+      - AUTH_TOKEN_TTL=${AUTH_TOKEN_TTL:-43200}
+      - FILE_STORAGE=/app/storage
+      - DB_URL=sqlite:////app/data/app.db
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+    volumes:
+      - makersvault_storage:/app/storage
+      - makersvault_db:/app/data
+    ports:
+      - "8000:8000"
+
+  web:
+    image: ${WEB_IMAGE:-shotgunwilly555/makersvault-web:v1}
+    restart: unless-stopped
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  makersvault_storage:
+  makersvault_db:

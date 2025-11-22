@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.middleware.cors import CORSMiddleware
@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 from pathlib import Path
 from PIL import Image
+from zipfile import ZipFile, ZIP_DEFLATED
+import tempfile
 import os, uuid, json, time
 
 import jwt
@@ -86,6 +88,13 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     expires_in: int
+
+
+class DownloadRequest(BaseModel):
+    asset_ids: Optional[List[str]] = None
+    tag: Optional[str] = None
+    folder_id: Optional[str] = None
+    filename: Optional[str] = None
 
 
 app = FastAPI(title="MakerVault API")
@@ -170,6 +179,34 @@ def to_out(a: Asset) -> AssetOut:
     )
 
 
+def arcname_for_asset(asset: Asset, folder_label_map: Optional[dict] = None) -> str:
+    folder_part = "unassigned"
+    if asset.folder_id:
+        folder_part = (folder_label_map or {}).get(asset.folder_id, asset.folder_id)
+    return f"{folder_part}/{asset.filename}"
+
+
+def zip_assets_response(assets: List[Asset], download_name: str, background: BackgroundTasks, folder_label_map: Optional[dict] = None):
+    files: List[tuple[str, Path]] = []
+    for a in assets:
+        path = asset_path(a.id, a.filename)
+        if not path.exists():
+            continue
+        files.append((arcname_for_asset(a, folder_label_map), path))
+    if not files:
+        raise HTTPException(status_code=404, detail="No files available for download")
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    with ZipFile(tmp_path, "w", ZIP_DEFLATED) as zf:
+        for arc, fs_path in files:
+            zf.write(fs_path, arcname=arc)
+
+    background.add_task(lambda p=tmp_path: p.unlink(missing_ok=True))
+    return FileResponse(tmp_path, media_type="application/zip", filename=download_name)
+
+
 # Routes ---------------------------------------------------------
 
 
@@ -186,6 +223,27 @@ def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = create_token(body.username)
     return LoginResponse(token=token, expires_in=AUTH_TOKEN_TTL)
+
+
+@app.post("/refresh", response_model=LoginResponse)
+def refresh_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme),
+    token_param: Optional[str] = Query(default=None, alias="token"),
+):
+    if not AUTH_ENABLED:
+        raise HTTPException(status_code=503, detail="Authentication is not configured on the server")
+    token = credentials.credentials if credentials else token_param
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        payload = jwt.decode(token, AUTH_SECRET, algorithms=[AUTH_ALGO])
+    except PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    new_token = create_token(username)
+    return LoginResponse(token=new_token, expires_in=AUTH_TOKEN_TTL)
 
 
 @app.post("/upload", response_model=AssetOut)
@@ -290,6 +348,39 @@ def list_assets(
             continue
         out.append(to_out(a))
     return out
+
+
+@app.post("/download/zip")
+def download_zip(body: DownloadRequest, background: BackgroundTasks, _: Optional[str] = Depends(require_auth)):
+    if not (body.asset_ids or body.tag or body.folder_id):
+        raise HTTPException(status_code=400, detail="Provide asset_ids, tag, or folder_id to download.")
+
+    with Session(engine) as s:
+        stmt = select(Asset)
+        if body.asset_ids:
+            stmt = stmt.where(Asset.id.in_(body.asset_ids))
+        if body.folder_id:
+            stmt = stmt.where(Asset.folder_id == body.folder_id)
+        assets = list(s.exec(stmt))
+        folder_map = {}
+        folder_ids = {a.folder_id for a in assets if a.folder_id}
+        if folder_ids:
+            for f in s.exec(select(Folder).where(Folder.id.in_(folder_ids))):
+                folder_map[f.id] = f.name
+
+    if body.tag:
+        tag = body.tag.strip()
+        assets = [a for a in assets if tag in json.loads(a.tags_json or "[]")]
+
+    download_name = body.filename or "makersvault.zip"
+    if body.tag:
+        safe_tag = body.tag.replace(" ", "_")[:50] or "tag"
+        download_name = f"{safe_tag}.zip"
+    if body.folder_id and folder_map.get(body.folder_id):
+        safe_name = folder_map[body.folder_id].replace(" ", "_")[:50] or "folder"
+        download_name = f"{safe_name}.zip"
+
+    return zip_assets_response(assets, download_name, background, folder_map)
 
 
 class TagUpdate(BaseModel):
@@ -439,6 +530,19 @@ def delete_folder(folder_id: str, _: Optional[str] = Depends(require_auth)):
         s.delete(f)
         s.commit()
     return {"ok": True}
+
+
+@app.get("/folder/{folder_id}/download")
+def download_folder(folder_id: str, background: BackgroundTasks, _: Optional[str] = Depends(require_auth)):
+    with Session(engine) as s:
+        folder = s.get(Folder, folder_id)
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        assets = list(s.exec(select(Asset).where(Asset.folder_id == folder_id)))
+        folder_map = {folder_id: folder.name}
+    download_name = f"{(folder.name or 'folder').replace(' ', '_')[:50] or 'folder'}.zip"
+    return zip_assets_response(assets, download_name, background, folder_map)
+
 @app.post("/asset/{asset_id}/folder", response_model=AssetOut)
 def update_asset_folder(asset_id: str, body: AssetFolderUpdate, _: Optional[str] = Depends(require_auth)):
     with Session(engine) as s:
