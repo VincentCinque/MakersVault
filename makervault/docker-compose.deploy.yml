@@ -7,8 +7,8 @@ services:
       - AUTH_PASSWORD=${AUTH_PASSWORD:-super-secret}
       - AUTH_SECRET=${AUTH_SECRET:-changeme-secret}
       - AUTH_TOKEN_TTL=${AUTH_TOKEN_TTL:-43200}
-      - FILE_STORAGE=/app/storage
-      - DB_URL=sqlite:////app/data/app.db
+      - FILE_STORAGE=${FILE_STORAGE:-/app/storage}
+      - DB_URL=${DB_URL:-sqlite:////app/data/app.db}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
     volumes:
       - makersvault_storage:/app/storage
