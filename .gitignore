@@ -1,0 +1,7 @@
+makervault/api/app.db
+makervault/api/__pycache__/
+makervault/api/.env.local
+makervault/data/storage/*
+makervault/web/dist/*
+makervault/web/node_modules/*
+makervault/web/.env.local
