@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   api:
     image: ${API_IMAGE:-shotgunwilly555/makersvault-api:v1}
