@@ -1,4 +1,0 @@
-#ifndef OCCTIMPORTJS_HPP
-#define OCCTIMPORTJS_HPP
-
-#endif
