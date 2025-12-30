@@ -1,3 +1,18 @@
+<h1>Coming in the New Year:</h1>
+<h3>Makers Vault Version 5.0 Pre-Release Notes</h3>
+<p>The next version of Makers Vault will come shortly after the new year. This will include many user feature requests. A short list of the new updates is:</p>
+<ul>
+  <li>Drag and Drop upload</li>
+  <li>Customization Themes</li>
+  <li>Open in Slicer (Beta)</li>
+  <li>Import from link (MakerWorld, Thingiverse, and Printables)</li>
+  <li>Batch Tagging</li>
+  <li>Batch Deleting</li>
+  <li>Search at Mount Point for Eligible File Types</li>
+  <li>Robust Handling of .zip Imports.</li>
+</ul>
+
+<p>Roadmap for Version 5.1 is still ongoing so please continue to make suggestions and feature requests on the Discussion Board.</p>
 
 <img width="1024" height="1024" alt="whitelogo" src="https://github.com/user-attachments/assets/22e86a97-05e2-44d7-815c-fb004957f5d2" /> 
 <h1>Makers Vault</h1>
