@@ -6,3 +6,9 @@ Dockerfile
 .gitattributes
 __pycache__
 .env
+data
+api/app.db
+api/storage
+web/dist
+slicer-bridge/slicer-bridge
+slicer-bridge/slicer-bridge.exe

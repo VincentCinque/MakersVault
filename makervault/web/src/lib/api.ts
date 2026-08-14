@@ -39,15 +39,41 @@ async function readErrorMessage(res: Response, fallback: string) {
 
 export type Asset = {
   id: string;
+  name: string;
   filename: string;
   mime: string;
   size: number;
   title?: string | null;
   notes?: string | null;
+  creator?: string | null;
+  collection?: string | null;
   tags: string[];
   url: string; // relative to API host
   thumb_url?: string | null; // relative to API host
   folder_id?: string | null;
+  storage_path?: string | null;
+  supporting_file_count: number;
+  prepared_print?: PreparedPrint | null;
+  slicer_url?: string | null;
+  slicer_filename?: string | null;
+};
+
+export type PreparedPrint = {
+  printer?: string | null;
+  material?: string | null;
+  nozzle_mm?: number | null;
+  layer_height_mm?: number | null;
+  estimated_seconds?: number | null;
+  format?: string | null;
+  removable?: boolean;
+};
+
+export type AssetFile = {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+  url: string;
 };
 
 export type ImportInspectInfo = {
@@ -76,6 +102,15 @@ export type MountImportSettings = {
   enabled: boolean;
   copy_files: boolean;
   path?: string | null;
+};
+
+export type StorageSettings = {
+  template: string;
+  default_template: string;
+  allowed_tokens: string[];
+  sample_path: string;
+  moved: number;
+  skipped: number;
 };
 
 function normalizePublicUrl(raw: string): string | null {
@@ -115,7 +150,10 @@ function isLocalHostName(hostname: string) {
 function resolveApiBase(): string {
   const settingsBase = apiBaseFromSettings();
   if (settingsBase) return settingsBase;
-  const envUrl = (import.meta.env.VITE_API_URL as string | undefined) || "";
+  const runtimeUrl = typeof window !== "undefined"
+    ? (window as unknown as { __MAKERSVAULT_CONFIG__?: { apiUrl?: string } }).__MAKERSVAULT_CONFIG__?.apiUrl
+    : "";
+  const envUrl = runtimeUrl || (import.meta.env.VITE_API_URL as string | undefined) || "";
   const isAbs = /^(https?:)?\/\//i.test(envUrl);
   const hasWindow = typeof window !== "undefined";
   const host = hasWindow ? window.location.hostname : "localhost";
@@ -333,13 +371,76 @@ export async function setTags(id: string, tags: string[]) {
   return res.json();
 }
 
-export async function updateAssetMeta(id: string, payload: { title?: string | null; notes?: string | null }) {
+export async function uploadGeneratedThumbnail(id: string, image: Blob): Promise<Asset> {
+  const body = new FormData();
+  body.set("file", image, "thumbnail.png");
+  const res = await fetch(`${apiBase()}/asset/${id}/thumbnail-generated`, {
+    method: "POST",
+    headers: authHeaders(),
+    body,
+  });
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, "Failed to save generated thumbnail"));
+  }
+  return res.json();
+}
+
+export async function listAssetFiles(id: string): Promise<AssetFile[]> {
+  const res = await fetch(`${apiBase()}/asset/${id}/files`, { headers: authHeaders() });
+  assertOk(res, "Failed to load supporting files");
+  return res.json();
+}
+
+export async function uploadAssetFile(id: string, file: File): Promise<Asset> {
+  const body = new FormData();
+  body.set("file", file, file.name);
+  const res = await fetch(`${apiBase()}/asset/${id}/files`, {
+    method: "POST",
+    headers: authHeaders(),
+    body,
+  });
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, "Failed to add file"));
+  }
+  return res.json();
+}
+
+export async function deleteAssetFile(assetId: string, fileId: string): Promise<Asset> {
+  const res = await fetch(`${apiBase()}/asset/${assetId}/files/${fileId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  assertOk(res, "Failed to remove supporting file");
+  return res.json();
+}
+
+export async function deletePreparedPrint(assetId: string): Promise<Asset> {
+  const res = await fetch(`${apiBase()}/asset/${assetId}/prepared-print`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  assertOk(res, "Failed to clear prepared print");
+  return res.json();
+}
+
+export async function updateAssetMeta(id: string, payload: {
+  name?: string | null;
+  title?: string | null;
+  notes?: string | null;
+  creator?: string | null;
+  collection?: string | null;
+}) {
   const res = await fetch(`${apiBase()}/asset/${id}/meta`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
-  assertOk(res, "Metadata update failed");
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, "Metadata update failed"));
+  }
   return res.json();
 }
 
@@ -365,7 +466,10 @@ export async function updateAssetFolder(id: string, folder_id: string | null) {
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ folder_id }),
   });
-  assertOk(res, "Folder update failed");
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, "Folder update failed"));
+  }
   return res.json();
 }
 
@@ -491,5 +595,27 @@ export async function updateMountImportSettings(payload: {
     body: JSON.stringify(payload),
   });
   assertOk(res, "Failed to update mount import settings");
+  return res.json();
+}
+
+export async function getStorageSettings(): Promise<StorageSettings> {
+  const res = await fetch(`${apiBase()}/settings/storage`, { headers: authHeaders() });
+  assertOk(res, "Failed to load storage settings");
+  return res.json();
+}
+
+export async function updateStorageSettings(payload: {
+  template: string;
+  apply_existing: boolean;
+}): Promise<StorageSettings> {
+  const res = await fetch(`${apiBase()}/settings/storage`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, "Failed to update storage settings"));
+  }
   return res.json();
 }

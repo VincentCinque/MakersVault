@@ -7,6 +7,8 @@ from models import AppConfig
 
 MOUNT_IMPORT_ENABLED_KEY = "mount_import_enabled"
 MOUNT_IMPORT_COPY_KEY = "mount_import_copy"
+STORAGE_TEMPLATE_KEY = "storage_path_template"
+DEFAULT_STORAGE_TEMPLATE = "{folder}/{model}/{filename}"
 
 
 def get_setting(key: str) -> Optional[str]:
@@ -51,3 +53,11 @@ def get_mount_import_copy(default: bool) -> bool:
 
 def set_mount_import_copy(value: bool) -> None:
     set_bool_setting(MOUNT_IMPORT_COPY_KEY, value)
+
+
+def get_storage_template() -> str:
+    return get_setting(STORAGE_TEMPLATE_KEY) or DEFAULT_STORAGE_TEMPLATE
+
+
+def set_storage_template(value: str) -> None:
+    set_setting(STORAGE_TEMPLATE_KEY, value)

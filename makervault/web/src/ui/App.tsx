@@ -203,6 +203,7 @@ export default function App() {
             onUnauthorized={handleUnauthorized}
             slicerSettings={settings.slicer}
             engravingSettings={settings.engraving}
+            previewSettings={settings.previews}
             theme={resolvedTheme}
           />
         ) : (

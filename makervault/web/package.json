@@ -6,9 +6,14 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "verify": "npm run typecheck && npm run test:run && npm run build"
   },
   "dependencies": {
+    "fflate": "0.8.2",
     "lucide-react": "^0.441.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -22,6 +27,8 @@
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.4.3",
+    "typescript": "5.6.3",
+    "vitest": "3.2.6",
     "vite": "^5.4.1"
   }
 }

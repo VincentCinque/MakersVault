@@ -1,10 +1,11 @@
 from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, File, Form, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from starlette.middleware.cors import CORSMiddleware
-from sqlmodel import SQLModel, Session, select
+from sqlmodel import Session, select
 from typing import List, Optional
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
+from contextlib import asynccontextmanager
 import tempfile
 import threading
 from urllib.parse import quote, urlparse
@@ -23,22 +24,54 @@ from auth import (
     create_token,
     require_auth,
 )
-from asset_service import asset_path, save_thumb
+from asset_service import (
+    STORAGE_TEMPLATE_TOKENS,
+    available_model_name,
+    backfill_embedded_thumbnails,
+    create_asset_record,
+    filename_for_model_name,
+    ensure_model_thumbnail,
+    finalize_asset_record,
+    managed_asset_path,
+    prune_empty_storage_dirs,
+    relocate_asset,
+    reorganize_managed_assets,
+    sample_storage_path,
+    save_thumb,
+    save_thumb_bytes,
+    unique_model_name,
+    validate_storage_template,
+)
+from asset_file_service import (
+    backfill_prepared_print_metadata,
+    delete_all_asset_files,
+    delete_prepared_file,
+    delete_supporting_file,
+    list_supporting_files,
+    managed_asset_file_path,
+    save_asset_file,
+)
 from config import MOUNT_IMPORT_ENABLED, MOUNT_IMPORT_PATH, MOUNT_IMPORT_COPY
-from db import STORAGE, THUMBS, engine, ensure_folder_parent_column, ensure_asset_source_path_column, ensure_asset_indexes
+from db import THUMBS, engine
 from file_utils import build_import_filename, mime_from_content_type, sanitize_filename
 from folder_service import validate_parent_folder
 from import_service import download_import_to_temp, import_asset_from_url, open_import_response
 from mount_import import scan_mount_imports
-from models import Asset, Folder
+from models import Asset, AssetFile, Folder
+from migrations import run_migrations
+from prepared_print import prepared_filename
 from settings_service import (
+    DEFAULT_STORAGE_TEMPLATE,
     get_mount_import_copy,
     get_mount_import_enabled,
+    get_storage_template,
     set_mount_import_copy,
     set_mount_import_enabled,
+    set_storage_template,
 )
 from schemas import (
     AssetOut,
+    AssetFileOut,
     FolderIn,
     FolderOut,
     LoginRequest,
@@ -56,11 +89,24 @@ from schemas import (
     ImportZipResult,
     MountImportSettings,
     MountImportSettingsOut,
+    StorageSettings,
+    StorageSettingsOut,
 )
 from zip_service import extract_zip_entries_to_assets, list_zip_entries
 from url_utils import normalize_import_url
 
-app = FastAPI(title="MakerVault API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    run_migrations(engine)
+    threading.Thread(target=backfill_embedded_thumbnails, daemon=True).start()
+    threading.Thread(target=backfill_prepared_print_metadata, daemon=True).start()
+    if MOUNT_IMPORT_PATH and get_mount_import_enabled(MOUNT_IMPORT_ENABLED):
+        threading.Thread(target=scan_mount_imports, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="MakerVault API", lifespan=lifespan)
 
 
 def normalize_origin(raw: str) -> Optional[str]:
@@ -103,16 +149,6 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def on_startup():
-    SQLModel.metadata.create_all(engine)
-    ensure_folder_parent_column()
-    ensure_asset_source_path_column()
-    ensure_asset_indexes()
-    if MOUNT_IMPORT_PATH and get_mount_import_enabled(MOUNT_IMPORT_ENABLED):
-        threading.Thread(target=scan_mount_imports, daemon=True).start()
-
-
 # Utilities ------------------------------------------------------
 
 def is_mount_source_allowed(path: Path) -> bool:
@@ -127,7 +163,7 @@ def is_mount_source_allowed(path: Path) -> bool:
 
 
 def resolve_asset_file(asset: Asset) -> Optional[Path]:
-    p = STORAGE / asset.id / asset.filename
+    p = managed_asset_path(asset)
     if p.exists():
         return p
     if asset.source_path:
@@ -144,17 +180,47 @@ def folder_to_out(f: Folder) -> "FolderOut":
 def to_out(a: Asset) -> AssetOut:
     tags = json.loads(a.tags_json or "[]")
     safe_filename = quote(a.filename or "", safe="")
+    try:
+        prepared = json.loads(a.prepared_metadata_json) if a.prepared_metadata_json else None
+    except (TypeError, ValueError):
+        prepared = None
+    if prepared:
+        prepared["removable"] = bool(a.prepared_file_id)
+    primary_url = f"/file/{a.id}/{safe_filename}"
+    slicer_url = f"/asset/{a.id}/prepared-print" if a.prepared_file_id else primary_url
     return AssetOut(
         id=a.id,
+        name=a.name or Path(a.filename).stem,
         filename=a.filename,
         mime=a.mime,
         size=a.size,
         title=a.title,
         notes=a.notes,
+        creator=a.creator,
+        collection=a.collection,
         tags=tags,
-        url=f"/file/{a.id}/{safe_filename}",
-        thumb_url=f"/thumb/{a.id}.jpg" if (THUMBS / f"{a.id}.jpg").exists() else None,
+        url=primary_url,
+        thumb_url=(
+            f"/thumb/{a.id}.jpg?v={(THUMBS / f'{a.id}.jpg').stat().st_mtime_ns}"
+            if (THUMBS / f"{a.id}.jpg").exists()
+            else None
+        ),
         folder_id=a.folder_id,
+        storage_path=a.storage_path,
+        supporting_file_count=int(a.supporting_file_count or 0),
+        prepared_print=prepared,
+        slicer_url=slicer_url,
+        slicer_filename=(prepared_filename(a.name, prepared) if a.prepared_file_id else a.filename),
+    )
+
+
+def asset_file_to_out(asset_file: AssetFile) -> AssetFileOut:
+    return AssetFileOut(
+        id=asset_file.id,
+        filename=asset_file.filename,
+        mime=asset_file.mime,
+        size=asset_file.size,
+        url=f"/asset/{asset_file.asset_id}/files/{asset_file.id}",
     )
 
 
@@ -167,11 +233,26 @@ def arcname_for_asset(asset: Asset, folder_label_map: Optional[dict] = None) -> 
 
 def zip_assets_response(assets: List[Asset], download_name: str, background: BackgroundTasks, folder_label_map: Optional[dict] = None):
     files: List[tuple[str, Path]] = []
+    supporting: dict[str, List[AssetFile]] = {}
+    asset_ids = [asset.id for asset in assets]
+    if asset_ids:
+        with Session(engine) as session:
+            for row in session.exec(
+                select(AssetFile).where(AssetFile.asset_id.in_(asset_ids), AssetFile.role == "supporting")
+            ):
+                supporting.setdefault(row.asset_id, []).append(row)
     for a in assets:
         path = resolve_asset_file(a)
         if not path:
             continue
         files.append((arcname_for_asset(a, folder_label_map), path))
+        folder_part = "unassigned"
+        if a.folder_id:
+            folder_part = (folder_label_map or {}).get(a.folder_id, a.folder_id)
+        for related in supporting.get(a.id, []):
+            related_path = managed_asset_file_path(related)
+            if related_path.exists():
+                files.append((f"{folder_part}/{a.name}/supporting/{related.filename}", related_path))
     if not files:
         raise HTTPException(status_code=404, detail="No files available for download")
 
@@ -214,6 +295,31 @@ def update_mount_import_settings(body: MountImportSettings, _: Optional[str] = D
     )
 
 
+def storage_settings_out(template: str, moved: int = 0, skipped: int = 0) -> StorageSettingsOut:
+    return StorageSettingsOut(
+        template=template,
+        default_template=DEFAULT_STORAGE_TEMPLATE,
+        allowed_tokens=list(STORAGE_TEMPLATE_TOKENS),
+        sample_path=sample_storage_path(template),
+        moved=moved,
+        skipped=skipped,
+    )
+
+
+@app.get("/settings/storage", response_model=StorageSettingsOut)
+def get_storage_settings(_: Optional[str] = Depends(require_auth)):
+    template = validate_storage_template(get_storage_template())
+    return storage_settings_out(template)
+
+
+@app.post("/settings/storage", response_model=StorageSettingsOut)
+def update_storage_settings(body: StorageSettings, _: Optional[str] = Depends(require_auth)):
+    template = validate_storage_template(body.template)
+    set_storage_template(template)
+    moved, skipped = reorganize_managed_assets(template) if body.apply_existing else (0, 0)
+    return storage_settings_out(template, moved, skipped)
+
+
 @app.post("/login", response_model=LoginResponse)
 def login(body: LoginRequest):
     if not AUTH_ENABLED:
@@ -251,23 +357,18 @@ async def upload(
     _: Optional[str] = Depends(require_auth),
 ):
     safe_name = sanitize_filename(file.filename)
-    asset = Asset(
-        filename=safe_name,
-        mime=file.content_type or "application/octet-stream",
-        size=0,
-        title=title,
-        notes=notes,
-        tags_json=json.dumps([t.strip() for t in (tags or "").split(",") if t.strip()]),
-        folder_id=folder_id,
+    asset = create_asset_record(
+        safe_name,
+        file.content_type or "application/octet-stream",
+        title,
+        notes,
+        [t.strip() for t in (tags or "").split(",") if t.strip()],
+        folder_id,
     )
 
-    with Session(engine) as s:
-        s.add(asset)
-        s.commit()
-        s.refresh(asset)
-
     # persist file
-    dest = asset_path(asset.id, asset.filename)
+    dest = managed_asset_path(asset)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     with open(dest, "wb") as f:
         while True:
             chunk = await file.read(1024 * 1024)
@@ -279,16 +380,10 @@ async def upload(
     # make a thumbnail for common image formats
     if (asset.mime or "").lower().startswith("image/") and dest.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
         save_thumb(asset.id, dest)
+    elif dest.suffix.lower() == ".3mf":
+        ensure_model_thumbnail(asset.id, dest)
 
-    # update size
-    with Session(engine) as s:
-        db_a = s.get(Asset, asset.id)
-        if db_a:
-            db_a.size = size
-            s.add(db_a)
-            s.commit()
-            s.refresh(db_a)
-            asset = db_a
+    asset = finalize_asset_record(asset.id, size, asset.mime) or asset
 
     return to_out(asset)
 
@@ -363,7 +458,67 @@ def get_file(asset_id: str, name: str, _: Optional[str] = Depends(require_auth))
         p,
         media_type=media_type or "application/octet-stream",
         filename=name,
+        headers={"Cache-Control": "private, max-age=86400"},
     )
+
+
+@app.get("/asset/{asset_id}/files", response_model=List[AssetFileOut])
+def get_supporting_files(asset_id: str, _: Optional[str] = Depends(require_auth)):
+    with Session(engine) as session:
+        if not session.get(Asset, asset_id):
+            raise HTTPException(404)
+    return [asset_file_to_out(row) for row in list_supporting_files(asset_id)]
+
+
+@app.post("/asset/{asset_id}/files", response_model=AssetOut)
+async def upload_related_file(
+    asset_id: str,
+    file: UploadFile = File(...),
+    _: Optional[str] = Depends(require_auth),
+):
+    asset = await save_asset_file(asset_id, file)
+    return to_out(asset)
+
+
+@app.get("/asset/{asset_id}/files/{file_id}")
+def download_supporting_file(asset_id: str, file_id: str, _: Optional[str] = Depends(require_auth)):
+    with Session(engine) as session:
+        record = session.get(AssetFile, file_id)
+        if not record or record.asset_id != asset_id or record.role != "supporting":
+            raise HTTPException(404)
+        path = managed_asset_file_path(record)
+        mime = record.mime
+        filename = record.filename
+    if not path.exists():
+        raise HTTPException(404)
+    return FileResponse(path, media_type=mime or "application/octet-stream", filename=filename)
+
+
+@app.delete("/asset/{asset_id}/files/{file_id}", response_model=AssetOut)
+def remove_supporting_file(asset_id: str, file_id: str, _: Optional[str] = Depends(require_auth)):
+    return to_out(delete_supporting_file(asset_id, file_id))
+
+
+@app.get("/asset/{asset_id}/prepared-print")
+def get_prepared_print(asset_id: str, _: Optional[str] = Depends(require_auth)):
+    with Session(engine) as session:
+        asset = session.get(Asset, asset_id)
+        if not asset or not asset.prepared_file_id:
+            raise HTTPException(404)
+        record = session.get(AssetFile, asset.prepared_file_id)
+        if not record or record.asset_id != asset_id or record.role != "prepared":
+            raise HTTPException(404)
+        path = managed_asset_file_path(record)
+        mime = record.mime
+        filename = record.filename
+    if not path.exists():
+        raise HTTPException(404)
+    return FileResponse(path, media_type=mime or "application/octet-stream", filename=filename)
+
+
+@app.delete("/asset/{asset_id}/prepared-print", response_model=AssetOut)
+def remove_prepared_print(asset_id: str, _: Optional[str] = Depends(require_auth)):
+    return to_out(delete_prepared_file(asset_id))
 
 
 @app.get("/thumb/{asset_id}.jpg")
@@ -371,13 +526,45 @@ def get_thumb(asset_id: str, _: Optional[str] = Depends(require_auth)):
     p = THUMBS / f"{asset_id}.jpg"
     if not p.exists():
         raise HTTPException(404)
-    return FileResponse(p)
+    return FileResponse(
+        p,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
+@app.post("/asset/{asset_id}/thumbnail-generated", response_model=AssetOut)
+async def save_generated_thumbnail(
+    asset_id: str,
+    file: UploadFile = File(...),
+    _: Optional[str] = Depends(require_auth),
+):
+    if (file.content_type or "").lower() not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=415, detail="Generated thumbnail must be PNG, JPEG, or WebP")
+    data = await file.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Generated thumbnail exceeds 8 MB")
+    with Session(engine) as s:
+        asset = s.get(Asset, asset_id)
+        if not asset:
+            raise HTTPException(404)
+        if not save_thumb_bytes(asset_id, data):
+            raise HTTPException(status_code=400, detail="Invalid thumbnail image")
+        s.refresh(asset)
+        return to_out(asset)
 
 
 def apply_asset_filters(stmt, q: Optional[str], tags: Optional[str], folder_id: Optional[str]):
     if q:
         qlike = f"%{q}%"
-        stmt = stmt.where((Asset.filename.like(qlike)) | (Asset.title.like(qlike)) | (Asset.notes.like(qlike)))
+        stmt = stmt.where(
+            (Asset.name.like(qlike))
+            | (Asset.filename.like(qlike))
+            | (Asset.title.like(qlike))
+            | (Asset.notes.like(qlike))
+            | (Asset.creator.like(qlike))
+            | (Asset.collection.like(qlike))
+        )
     if folder_id:
         stmt = stmt.where(Asset.folder_id == folder_id)
     tag_filter = [t.strip() for t in (tags or "").split(",") if t.strip()]
@@ -398,7 +585,7 @@ def list_assets(
 ):
     with Session(engine) as s:
         stmt = apply_asset_filters(select(Asset), q, tags, folder_id)
-        stmt = stmt.order_by(Asset.filename, Asset.id)
+        stmt = stmt.order_by(Asset.name, Asset.filename, Asset.id)
         if limit is not None:
             stmt = stmt.limit(limit + 1)
             if offset:
@@ -484,7 +671,9 @@ def set_tags(asset_id: str, body: TagUpdate, _: Optional[str] = Depends(require_
         a = s.get(Asset, asset_id)
         if not a:
             raise HTTPException(404)
+        old_path = managed_asset_path(a)
         a.tags_json = json.dumps(body.tags)
+        relocate_asset(a, s, old_path)
         s.add(a)
         s.commit()
         s.refresh(a)
@@ -497,10 +686,23 @@ def update_asset_meta(asset_id: str, body: AssetMetaUpdate, _: Optional[str] = D
         a = s.get(Asset, asset_id)
         if not a:
             raise HTTPException(404)
-        if body.title is not None:
-            a.title = body.title
+        old_path = managed_asset_path(a)
+        requested_name = body.name if body.name is not None else body.title
+        if requested_name is not None:
+            next_name = unique_model_name(s, requested_name, a.folder_id, exclude_id=a.id)
+            if next_name != a.name:
+                if not old_path.exists() and a.source_path:
+                    raise HTTPException(400, "Renaming is not supported for mounted no-copy files.")
+                a.name = next_name
+                a.title = next_name
+                a.filename = filename_for_model_name(next_name, a.filename)
         if body.notes is not None:
             a.notes = body.notes
+        if body.creator is not None:
+            a.creator = body.creator.strip() or None
+        if body.collection is not None:
+            a.collection = body.collection.strip() or None
+        relocate_asset(a, s, old_path)
         s.add(a)
         s.commit()
         s.refresh(a)
@@ -519,24 +721,20 @@ def rename_asset(asset_id: str, body: AssetRename, _: Optional[str] = Depends(re
         a = s.get(Asset, asset_id)
         if not a:
             raise HTTPException(404)
-        old_path = STORAGE / asset_id / a.filename
+        old_path = managed_asset_path(a)
         if not old_path.exists():
             if a.source_path:
                 raise HTTPException(400, "Renaming is not supported for mounted files.")
             raise HTTPException(404, "File not found on disk")
-        root, ext = os.path.splitext(os.path.basename(a.filename))
-        proposed_root, proposed_ext = os.path.splitext(os.path.basename(new_name))
-        final_ext = proposed_ext or ext
-        if not final_ext:
-            raise HTTPException(400, "Filename must include an extension")
-        new_name_only = (proposed_root or root) + final_ext
-        new_path = STORAGE / asset_id / new_name_only
-        if new_name_only == a.filename:
+        proposed_root, _ = os.path.splitext(os.path.basename(new_name))
+        model_name = unique_model_name(s, proposed_root or new_name, a.folder_id, exclude_id=a.id)
+        new_name_only = filename_for_model_name(model_name, a.filename)
+        if new_name_only == a.filename and model_name == a.name:
             return to_out(a)
-        if new_path.exists():
-            raise HTTPException(400, "A file with that name already exists")
-        old_path.rename(new_path)
+        a.name = model_name
+        a.title = model_name
         a.filename = new_name_only
+        relocate_asset(a, s, old_path)
         s.add(a)
         s.commit()
         s.refresh(a)
@@ -545,6 +743,13 @@ def rename_asset(asset_id: str, body: AssetRename, _: Optional[str] = Depends(re
 
 @app.delete("/asset/{asset_id}")
 def delete_asset(asset_id: str, _: Optional[str] = Depends(require_auth)):
+    managed_path: Optional[Path] = None
+    with Session(engine) as s:
+        a = s.get(Asset, asset_id)
+        if not a:
+            raise HTTPException(404)
+        managed_path = managed_asset_path(a)
+    delete_all_asset_files(asset_id)
     with Session(engine) as s:
         a = s.get(Asset, asset_id)
         if not a:
@@ -553,11 +758,10 @@ def delete_asset(asset_id: str, _: Optional[str] = Depends(require_auth)):
         s.commit()
     # best-effort cleanup
     try:
-        ap = STORAGE / asset_id
-        if ap.exists():
-            for child in ap.iterdir():
-                child.unlink(missing_ok=True)
-            ap.rmdir()
+        if managed_path and managed_path.exists():
+            parent = managed_path.parent
+            managed_path.unlink(missing_ok=True)
+            prune_empty_storage_dirs(parent)
         (THUMBS / f"{asset_id}.jpg").unlink(missing_ok=True)
     except Exception:
         pass
@@ -598,7 +802,9 @@ def update_folder(folder_id: str, body: FolderIn, _: Optional[str] = Depends(req
         s.add(f)
         s.commit()
         s.refresh(f)
-        return folder_to_out(f)
+        result = folder_to_out(f)
+    reorganize_managed_assets()
+    return result
 
 
 @app.delete("/folder/{folder_id}")
@@ -613,10 +819,16 @@ def delete_folder(folder_id: str, _: Optional[str] = Depends(require_auth)):
             s.add(child)
         # Unassign assets in this folder
         for asset in s.exec(select(Asset).where(Asset.folder_id == folder_id)):
+            next_name = available_model_name(s, asset.name, None, exclude_id=asset.id)
+            if next_name != asset.name:
+                asset.name = next_name
+                asset.title = next_name
+                asset.filename = filename_for_model_name(next_name, asset.filename)
             asset.folder_id = None
             s.add(asset)
         s.delete(f)
         s.commit()
+    reorganize_managed_assets()
     return {"ok": True}
 
 
@@ -637,14 +849,18 @@ def update_asset_folder(asset_id: str, body: AssetFolderUpdate, _: Optional[str]
         asset = s.get(Asset, asset_id)
         if not asset:
             raise HTTPException(404)
+        old_path = managed_asset_path(asset)
         folder_id = body.folder_id or None
         if folder_id:
             folder = s.get(Folder, folder_id)
             if not folder:
                 raise HTTPException(status_code=400, detail="Folder not found")
+            unique_model_name(s, asset.name, folder.id, exclude_id=asset.id)
             asset.folder_id = folder.id
         else:
             asset.folder_id = None
+            unique_model_name(s, asset.name, None, exclude_id=asset.id)
+        relocate_asset(asset, s, old_path)
         s.add(asset)
         s.commit()
         s.refresh(asset)

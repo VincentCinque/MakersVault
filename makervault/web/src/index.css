@@ -135,4 +135,223 @@ html, body, #root { height: 100%; }
   .border-accent { border-color: var(--mv-accent); }
   .border-accent-soft { border-color: var(--mv-accent-border); }
   .text-accent { color: var(--mv-accent); }
+
+  .sidebar-shell {
+    @apply h-full w-[19rem] min-w-[19rem] flex flex-col gap-3 border-r px-3.5 pb-3 pt-4;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--mv-panel-strong) 96%, var(--mv-accent) 4%), var(--mv-panel-strong));
+    border-color: var(--mv-border);
+    box-shadow: 1px 0 0 color-mix(in srgb, var(--mv-border) 42%, transparent), 8px 0 28px rgba(0, 0, 0, 0.04);
+  }
+
+  .sidebar-header {
+    @apply flex min-h-[48px] items-center justify-between gap-3 px-1;
+  }
+
+  .sidebar-eyebrow {
+    @apply mb-0.5 text-[10px] font-semibold uppercase tracking-[0.16em];
+    color: var(--mv-text-subtle);
+  }
+
+  .sidebar-title {
+    @apply truncate text-[19px] font-semibold tracking-[-0.02em];
+  }
+
+  .sidebar-count {
+    @apply inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold;
+    color: var(--mv-text-muted);
+    background: color-mix(in srgb, var(--mv-text-muted) 12%, transparent);
+  }
+
+  .sidebar-new-button {
+    @apply inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-all;
+    color: var(--mv-accent-contrast);
+    background: var(--mv-accent);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--mv-accent) 20%, transparent);
+  }
+
+  .sidebar-new-button:hover { background: var(--mv-accent-strong); transform: translateY(-1px); }
+  .sidebar-new-button:active { transform: translateY(0); }
+
+  .sidebar-search {
+    @apply flex h-10 items-center gap-2 rounded-lg border px-3 transition-colors;
+    color: var(--mv-text-muted);
+    border-color: var(--mv-border-strong);
+    background: color-mix(in srgb, var(--mv-panel) 76%, transparent);
+  }
+
+  .sidebar-search:focus-within {
+    color: var(--mv-text);
+    border-color: var(--mv-accent);
+    box-shadow: 0 0 0 3px var(--mv-accent-soft);
+  }
+
+  .sidebar-search input {
+    @apply min-w-0 flex-1 bg-transparent text-[13px] outline-none;
+    color: var(--mv-text);
+  }
+
+  .sidebar-search input::placeholder { color: var(--mv-text-subtle); }
+  .sidebar-search > button { @apply -mr-1 grid h-6 w-6 place-items-center rounded-md; }
+  .sidebar-search > button:hover { background: var(--mv-panel-soft); color: var(--mv-text); }
+
+  .sidebar-navigation {
+    @apply min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-0.5;
+    scrollbar-color: color-mix(in srgb, var(--mv-text-muted) 30%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+
+  .sidebar-all-items {
+    @apply mb-4 flex h-10 w-full items-center gap-2.5 rounded-lg border border-transparent px-2.5 text-[13px] font-medium transition-colors;
+    color: var(--mv-text-muted);
+  }
+
+  .sidebar-all-items:hover { color: var(--mv-text); background: var(--mv-panel-soft); }
+  .sidebar-all-items.is-selected { color: var(--mv-text); background: var(--mv-accent-soft); }
+  .sidebar-all-items.is-selected .sidebar-all-icon { color: var(--mv-accent); background: color-mix(in srgb, var(--mv-accent) 14%, transparent); }
+
+  .sidebar-all-items.is-drop-target,
+  .sidebar-tree-row.is-drop-target {
+    border-color: var(--mv-accent);
+    box-shadow: inset 0 0 0 1px var(--mv-accent), 0 0 0 3px var(--mv-accent-soft);
+  }
+
+  .sidebar-all-icon {
+    @apply grid h-7 w-7 shrink-0 place-items-center rounded-md;
+    color: var(--mv-text-muted);
+    background: color-mix(in srgb, var(--mv-text-muted) 9%, transparent);
+  }
+
+  .sidebar-root-label {
+    @apply rounded px-1.5 py-0.5 text-[8px] font-bold tracking-widest;
+    color: var(--mv-text-subtle);
+    background: color-mix(in srgb, var(--mv-text-muted) 8%, transparent);
+  }
+
+  .sidebar-section-heading {
+    @apply mb-1.5 flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.14em];
+    color: var(--mv-text-subtle);
+  }
+
+  .sidebar-section-heading span:last-child { @apply tracking-normal; }
+  .sidebar-tree { @apply flex flex-col gap-0.5 pb-3; }
+  .sidebar-tree-node { @apply relative min-w-0; }
+
+  .sidebar-tree-row {
+    @apply flex min-h-[38px] w-full items-center gap-1 rounded-lg border border-transparent pr-1.5 text-[13px] transition-colors;
+    color: var(--mv-text-muted);
+  }
+
+  .sidebar-tree-row:hover { color: var(--mv-text); background: var(--mv-panel-soft); }
+  .sidebar-tree-row.is-selected { color: var(--mv-text); background: var(--mv-accent-soft); }
+  .sidebar-tree-row.is-selected::before {
+    content: "";
+    @apply absolute left-0 h-5 w-0.5 rounded-full;
+    background: var(--mv-accent);
+  }
+
+  .sidebar-tree-chevron,
+  .sidebar-tree-spacer {
+    @apply grid h-6 w-5 shrink-0 place-items-center rounded-md;
+  }
+
+  .sidebar-tree-chevron { color: var(--mv-text-subtle); }
+  .sidebar-tree-chevron:hover { color: var(--mv-text); background: color-mix(in srgb, var(--mv-text-muted) 10%, transparent); }
+
+  .sidebar-tree-label { @apply flex min-w-0 flex-1 items-center gap-2 py-1 text-left font-medium; }
+  .sidebar-folder-icon { @apply h-4 w-4 shrink-0; color: var(--mv-text-subtle); }
+  .sidebar-tree-row.is-selected .sidebar-folder-icon { color: var(--mv-accent); }
+
+  .sidebar-tree-children {
+    @apply relative ml-[19px] pl-0.5;
+    border-left: 1px solid color-mix(in srgb, var(--mv-border-strong) 68%, transparent);
+  }
+
+  .sidebar-folder-actions { @apply shrink-0 opacity-0 transition-opacity; }
+  .sidebar-tree-row:hover .sidebar-folder-actions,
+  .sidebar-folder-actions:focus-within,
+  .sidebar-folder-actions:has(details[open]) { @apply opacity-100; }
+
+  .sidebar-action-trigger {
+    @apply grid h-7 w-7 cursor-pointer list-none place-items-center rounded-md;
+    color: var(--mv-text-muted);
+  }
+
+  .sidebar-action-trigger::-webkit-details-marker { display: none; }
+  .sidebar-action-trigger:hover,
+  details[open] > .sidebar-action-trigger { color: var(--mv-text); background: color-mix(in srgb, var(--mv-text-muted) 12%, transparent); }
+
+  .sidebar-folder-menu {
+    @apply absolute right-0 z-30 mt-1 w-[180px] overflow-hidden rounded-xl border p-1 shadow-2xl;
+    color: var(--mv-text);
+    border-color: var(--mv-border-strong);
+    background: var(--mv-panel-strong);
+  }
+
+  .sidebar-menu-item {
+    @apply flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs disabled:opacity-50;
+  }
+
+  .sidebar-menu-item:hover { background: var(--mv-panel-soft); }
+  .sidebar-menu-item svg { color: var(--mv-text-muted); }
+  .sidebar-menu-danger { color: #ef4444; }
+  .sidebar-menu-danger svg { color: #ef4444; }
+  .sidebar-menu-danger:hover { background: rgba(239, 68, 68, 0.1); }
+
+  .sidebar-empty {
+    @apply mx-2 mt-5 flex flex-col items-center gap-1.5 rounded-xl border border-dashed px-4 py-6 text-center text-xs;
+    color: var(--mv-text-muted);
+    border-color: var(--mv-border-strong);
+  }
+
+  .sidebar-empty svg { color: var(--mv-text-subtle); }
+  .sidebar-empty button { @apply mt-1 text-[11px] font-semibold; color: var(--mv-accent); }
+
+  .sidebar-editor {
+    @apply flex flex-col gap-2.5 rounded-xl border p-3 shadow-xl;
+    border-color: var(--mv-border-strong);
+    background: var(--mv-panel-strong);
+  }
+
+  .sidebar-editor-heading { @apply mb-0.5 flex items-center gap-2.5; }
+  .sidebar-editor-heading > div { @apply min-w-0 flex-1; }
+  .sidebar-editor-heading strong { @apply block text-xs font-semibold; }
+  .sidebar-editor-heading small { @apply block text-[10px]; color: var(--mv-text-subtle); }
+  .sidebar-editor-heading > button { @apply grid h-7 w-7 place-items-center rounded-md; color: var(--mv-text-muted); }
+  .sidebar-editor-heading > button:hover { color: var(--mv-text); background: var(--mv-panel-soft); }
+
+  .sidebar-editor-icon {
+    @apply grid h-8 w-8 shrink-0 place-items-center rounded-lg;
+    color: var(--mv-accent);
+    background: var(--mv-accent-soft);
+  }
+
+  .sidebar-editor > label { @apply flex flex-col gap-1; }
+  .sidebar-editor > label > span { @apply text-[10px] font-semibold uppercase tracking-wider; color: var(--mv-text-subtle); }
+  .sidebar-editor > label > input,
+  .sidebar-editor > label > select {
+    @apply h-9 w-full rounded-lg border px-2.5 text-xs outline-none;
+    color: var(--mv-text);
+    border-color: var(--mv-border-strong);
+    background: var(--mv-panel-soft);
+  }
+
+  .sidebar-editor > label > input:focus,
+  .sidebar-editor > label > select:focus { border-color: var(--mv-accent); box-shadow: 0 0 0 3px var(--mv-accent-soft); }
+
+  .sidebar-editor-actions { @apply mt-0.5 flex gap-2; }
+  .sidebar-editor-actions button { @apply inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border text-[11px] font-semibold; border-color: var(--mv-border-strong); }
+  .sidebar-editor-actions button:hover { background: var(--mv-panel-soft); }
+  .sidebar-editor-actions button.primary { color: var(--mv-accent-contrast); border-color: var(--mv-accent); background: var(--mv-accent); }
+  .sidebar-editor-actions button:disabled { @apply cursor-not-allowed opacity-50; }
+
+  .sidebar-footer { @apply border-t pt-3; border-color: var(--mv-border); }
+  .sidebar-settings {
+    @apply flex h-10 w-full items-center gap-2.5 rounded-lg border border-transparent px-3 text-[13px] font-medium transition-colors;
+    color: var(--mv-text-muted);
+  }
+
+  .sidebar-settings:hover { color: var(--mv-text); background: var(--mv-panel-soft); }
+  .sidebar-settings.is-selected { color: var(--mv-text); background: var(--mv-accent-soft); }
+  .sidebar-settings.is-selected svg { color: var(--mv-accent); }
 }

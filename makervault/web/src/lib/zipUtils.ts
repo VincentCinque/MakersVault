@@ -46,7 +46,7 @@ export function isZipFile(name: string) {
 }
 
 export async function readZipEntries(file: File): Promise<{ entries: ZipEntry[]; data: Record<string, Uint8Array> }> {
-  const { unzipSync } = await import("three/examples/jsm/libs/fflate.module.js");
+  const { unzipSync } = await import("fflate");
   const raw = new Uint8Array(await file.arrayBuffer());
   const zipEntries = unzipSync(raw);
   const data: Record<string, Uint8Array> = {};

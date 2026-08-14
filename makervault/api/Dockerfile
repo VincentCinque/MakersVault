@@ -1,12 +1,22 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 WORKDIR /app
 
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
+
+FROM base AS test
+COPY requirements-dev.txt requirements-dev.lock ./
+RUN pip install --no-cache-dir -r requirements-dev.lock
+COPY . .
+ENV DB_URL=sqlite:////tmp/makersvault-test.db \
+    FILE_STORAGE=/tmp/makersvault-storage \
+    IMPORT_MOUNT_ON_STARTUP=false
+CMD ["python", "-m", "pytest", "-q"]
+
+FROM base AS runtime
 RUN apt-get update \
   && apt-get install -y --no-install-recommends gosu \
   && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
 
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

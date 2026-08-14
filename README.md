@@ -24,83 +24,25 @@
 <h2>Road Map</h2>
 <h4>Version 5.1</h4>
 <ul>
-  <li>Open in Lightburn Setting</li>
-  <li>MFA and multi-user</li>
-  <li>New themes</li>
-  <li>Bulk move</li>
-  <li>View sub-folders in root folders.</li>
-  <li>Robust handling for adding existing folders from OS.</li>
+  <li>Bounded, cached previews that cannot freeze the library.</li>
+  <li>Visible bulk organization workflows and clearer folder navigation.</li>
+  <li>Observable mounted-library imports.</li>
+  <li>Secure deployment defaults and tested upgrade/recovery guidance.</li>
+  <li>Polish for metadata, supporting files, prepared-print summaries, LightBurn, and the local bridge.</li>
 </ul>
+<p>Multi-user accounts, MFA, SSO, and the full Project/Artifact/Revision architecture are deliberately deferred. See <a href="makervault/docs/V5.1_SCOPE.md">the v5.1 release contract</a> and <a href="makervault/docs/ARCHITECTURE_RUNBOOK.md">architecture runbook</a>.</p>
 
 <h2>Getting Started</h2>
 <p>Makers Vault is deployable using Docker pull or Docker Compose:</p>
 <h3>Docker Compose</h3>
 
-```yaml
-version: "3.9"
-
-services:
-  api:
-    image: ${API_IMAGE:-shotgunwilly555/makersvault-api:latest}
-    restart: unless-stopped
-    environment:
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
-      - AUTH_PASSWORD=${AUTH_PASSWORD:-super-secret}
-      - AUTH_SECRET=${AUTH_SECRET:-changeme-secret}
-      - AUTH_TOKEN_TTL=${AUTH_TOKEN_TTL:-43200}
-      - FILE_STORAGE=/app/storage
-      - DB_URL=sqlite:////app/data/app.db
-      - PUBLIC_URL=${PUBLIC_URL:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-}
-      - IMPORT_MOUNT_PATH=${IMPORT_MOUNT_PATH:-/imports}
-      - IMPORT_MOUNT_EXTS=${IMPORT_MOUNT_EXTS:-stl,3mf,step,stp,obj,svg,png,jpg,jpeg,webp,bmp,lbrn,lbrn2,zip}
-      - IMPORT_MOUNT_INCLUDE_HIDDEN=${IMPORT_MOUNT_INCLUDE_HIDDEN:-false}
-      - IMPORT_MOUNT_ON_STARTUP=${IMPORT_MOUNT_ON_STARTUP:-true}
-    volumes:
-      - makersvault_storage:/app/storage
-      - makersvault_db:/app/data
-      - ${IMPORT_MOUNT_PATH_HOST:-/path/to/imports}:/imports:ro
-    ports:
-      - "${API_PORT:-8000}:8000"
-
-  web:
-    image: ${WEB_IMAGE:-shotgunwilly555/makersvault-web:latest}
-    restart: unless-stopped
-    environment:
-      - PUBLIC_URL=${PUBLIC_URL:-}
-      - VITE_API_URL=${VITE_API_URL:-}
-      - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-    ports:
-      - "5173:5173"
-    depends_on:
-      - api
-
-volumes:
-  makersvault_storage:
-  makersvault_db:
-
+```bash
+cd makervault
+docker compose -f docker-compose.deploy.yml up -d
 ```
 
-<h3>Docker Pull</h3>
-
-```yaml
-docker pull shotgunwilly555/makersvault-api:latest
-docker pull shotgunwilly555/makersvault-web:latest
-
-docker run -d --name mv-api -p 8000:8000 \
-  -e AUTH_USERNAME=admin -e AUTH_PASSWORD=super-secret \
-  shotgunwilly555/makersvault-api:latest
-
-docker run -d --name mv-web -p 5173:5173 \
-  -e VITE_API_URL=http://10.0.0.160:8000 \
-  shotgunwilly555/makersvault-web:latest
-
-```
+<p><code>makervault/docker-compose.deploy.yml</code> is the canonical production manifest. <code>makervault/docker-compose.yml</code> is the canonical local source-build manifest. The historical <code>docker-deploy.yml</code> filename is retained only as a compatibility alias.</p>
+<p><strong>Security notice:</strong> the current beta authentication defaults are suitable only for a trusted local test deployment. Do not expose the current build directly to the Internet. Secure first-run configuration is a v5.1 release gate.</p>
 
 <h3>Setting up the .env file</h3>
 <p>Create a <strong>.env</strong> file in the same folder as <code>docker-compose.yml</code>. Start with this baseline:</p>
@@ -132,23 +74,23 @@ IMPORT_MOUNT_ON_STARTUP=true
 
 <h3>Reverse Proxy Support (Any Provider)</h3>
 <p>Makers Vault is reverse-proxy agnostic. Nginx Proxy Manager, Traefik, Nginx, Caddy, HAProxy, and Apache all work.</p>
-<p><strong>Required routes:</strong></p>
+<p><strong>Recommended single-host route:</strong></p>
 <ul>
-  <li><code>/</code> to <code>web:5173</code></li>
-  <li><code>/api/*</code> to <code>api:8000</code></li>
+  <li>Send all paths for <code>makersvault.example</code> to <code>web:5173</code>.</li>
+  <li>The web container serves the UI and proxies <code>/api/*</code> internally to <code>api:8000</code>.</li>
 </ul>
-<p><strong>Important:</strong> configure your proxy so public <code>/api/assets</code> reaches the API service route for <code>/assets</code>.</p>
+<p>A second public API hostname is optional, not required. See <a href="makervault/docs/architecture/REVERSE_PROXY.md">the reverse-proxy topology guide</a>.</p>
 
 <h4>Recommended flow for proxied setups</h4>
 <p>Start containers:</p>
 
 ```bash
-docker compose -f docker-compose.yml up -d
+docker compose -f docker-compose.deploy.yml up -d
 ```
 
 <ol>
   <li>Bring the stack up with Docker Compose.</li>
-  <li>Configure your reverse proxy routes (<code>/</code> and <code>/api/*</code>).</li>
+  <li>Configure one reverse-proxy host that sends all paths to the web service.</li>
   <li>Set <code>PUBLIC_URL</code> in <code>.env</code> (for example, <code>https://makersvault.example.com</code>) and restart.</li>
   <li>Open Makers Vault at your public domain.</li>
 </ol>
@@ -170,12 +112,12 @@ VITE_ALLOWED_HOSTS=
 ```
 
 <p><strong>Running as non-root:</strong> set <code>PUID</code> and <code>PGID</code> to your host user/group IDs (defaults to 1000). Containers create a matching user at startup so volume mounts stay writable.</p>
-<p><strong>Keeping API internal:</strong> when everything is behind a reverse proxy, you can remove <code>ports</code> from <code>api</code> and use <code>expose: ["8000"]</code> instead.</p>
+<p><strong>Keeping API internal:</strong> with the recommended single-host topology, the external proxy does not need an API route. You may remove the API's published host port after verifying bridge and diagnostic requirements; the web container still reaches <code>api:8000</code> on the Compose network.</p>
 
 <h4>Quick troubleshooting</h4>
 <ul>
   <li>Login fails with CORS error: add the public domain to <code>CORS_ORIGINS</code>.</li>
-  <li>UI loads but API calls 404 under <code>/api</code>: fix proxy mapping so <code>/api/*</code> reaches API routes correctly.</li>
+  <li>UI loads but API calls 404 under <code>/api</code>: forward the path unchanged to the web container and let its Nginx proxy reach the API.</li>
   <li>LetsEncrypt HTTP-01 challenge fails and returns app HTML: make sure external port 80 points to your reverse proxy (not directly to Makers Vault).</li>
   <li>Public login fails while LAN/direct works: clear/avoid hardcoded private-IP <code>VITE_API_URL</code> for proxied access.</li>
 </ul>
@@ -343,14 +285,26 @@ In the future there are plans to add support for more websites, but in this curr
 
 <a href="https://github.com/VincentCinque/MakersVault/tree/main/makervault/slicer-bridge">The Slicer Bridge can be downloaded here.</a>
 
+<h2>Model Bundles</h2>
+<p>Each model can include visible supporting files such as assembly PDFs, text notes, and other documentation. Expand <strong>Supporting files</strong> on a model card to add, download, or remove them. Supporting documents are included when models are downloaded as a ZIP.</p>
+<p>Prepared print files are handled as internal model data rather than shown as downloadable attachments. When MakersVault finds prepared data in a 3MF or an added print file, the card shows the printer, material, nozzle size, and estimated time when those values are available. <strong>Open in Slicer</strong> hands the supplied prepared file to the configured slicer; MakersVault never slices a model, sends it to a printer, or starts a print.</p>
+
 <h2>Settings</h2>
-<p>The settings page is available from the button at the bottom-left of the app. Sub-menus include Open in Slicer, Reverse Proxy, Themes, and Imports.</p>
+<p>The settings page is available from the button at the bottom-left of the app. Sub-menus include Open in Slicer, Reverse Proxy, Themes, Storage Structure, and Imports.</p>
 <h3>Themes</h3>
 
 <img width="4405" height="2189" alt="Settings" src="https://github.com/user-attachments/assets/87eb158a-d2d3-48ce-a4ec-2a6e80955c99" />
 
 
 <p>The currently available themes are: System default, light, dark, neon green, neon purple, and neon blue. The themes change page accents as well as the background color.</p>
+
+<h3>Model Previews</h3>
+<p>MakersVault automatically uses embedded 3MF thumbnail artwork when available. Missing previews are generated only when their cards approach the visible area, one at a time, and are saved to the server so other browsers do not need to render them again.</p>
+<p>The Model Previews setting offers <strong>Automatic</strong>, <strong>On demand</strong>, and <strong>Disabled</strong> modes. Saved or embedded thumbnails are always displayed. Interactive 3D viewing remains available when card generation is disabled.</p>
+
+<h3>Storage Structure</h3>
+<p>Managed files can be organized with a configurable path template. The default is <code>{folder}/{model}/{filename}</code>. Available tokens include <code>{folder}</code>, <code>{collection}</code>, <code>{tags}</code>, <code>{creator}</code>, <code>{model}</code>, <code>{name}</code>, <code>{filename}</code>, and <code>{id}</code>. The template must contain <code>{filename}</code> in its final path segment.</p>
+<p>Model names are unique inside each MakerVault folder. Renaming a model renames the stored file while preserving its extension. Use <strong>Reorganize existing managed files now</strong> to apply a new template to the current library; mounted no-copy files are left in place.</p>
 
 <h2>Imports Settings</h2>
 <p>Makerworld enforces a 5 download only policy if not logged in. This will limit the amount of "Import from Link" requests you can make unless you place a cookie authentication token in the session cookie field in the import settings.

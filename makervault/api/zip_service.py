@@ -6,7 +6,7 @@ from zipfile import ZipFile
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from asset_service import asset_path, cleanup_asset, create_asset_record, finalize_asset_record, save_thumb
+from asset_service import cleanup_asset, create_asset_record, ensure_model_thumbnail, finalize_asset_record, managed_asset_path, save_thumb
 from config import IMPORT_MAX_BYTES
 from db import engine
 from file_utils import mime_from_content_type, sanitize_filename
@@ -108,7 +108,8 @@ def extract_zip_entries_to_assets(zip_path: Path, selections: List[str], body: I
             filename = sanitize_filename(os.path.basename(entry_name))
             mime = mime_from_content_type("", filename)
             asset = create_asset_record(filename, mime, body.title, body.notes, body.tags, target_folder_id)
-            dest = asset_path(asset.id, asset.filename)
+            dest = managed_asset_path(asset)
+            dest.parent.mkdir(parents=True, exist_ok=True)
             try:
                 size = 0
                 with zf.open(info) as src, open(dest, "wb") as out:
@@ -122,6 +123,8 @@ def extract_zip_entries_to_assets(zip_path: Path, selections: List[str], body: I
                         out.write(chunk)
                 if (mime or "").startswith("image/") and dest.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
                     save_thumb(asset.id, dest)
+                elif dest.suffix.lower() == ".3mf":
+                    ensure_model_thumbnail(asset.id, dest)
                 refreshed = finalize_asset_record(asset.id, size, mime)
                 assets.append(refreshed or asset)
             except Exception:

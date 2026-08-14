@@ -1,6 +1,13 @@
 import React from "react";
-import { AppSettings, ENGRAVER_OPTIONS, SLICER_OPTIONS, THEME_OPTIONS, ThemeId } from "../lib/settings";
-import { UnauthorizedError, createFolder, getMountImportSettings, updateMountImportSettings } from "../lib/api";
+import { AppSettings, ENGRAVER_OPTIONS, PreviewMode, SLICER_OPTIONS, THEME_OPTIONS, ThemeId } from "../lib/settings";
+import {
+  UnauthorizedError,
+  createFolder,
+  getMountImportSettings,
+  getStorageSettings,
+  updateMountImportSettings,
+  updateStorageSettings,
+} from "../lib/api";
 import { entriesFromFileList, uploadEntriesToFolder, type UploadEntry } from "../lib/uploadTree";
 
 type Props = {
@@ -12,7 +19,7 @@ type Props = {
   onSelectFolder?: (id: string | null) => void;
 };
 
-type Section = "root" | "slicer" | "engraving" | "theme" | "network" | "imports";
+type Section = "root" | "slicer" | "engraving" | "theme" | "network" | "previews" | "storage" | "imports";
 
 const THEME_SWATCHES: Record<ThemeId, string> = {
   system: "linear-gradient(135deg, #f8fafc 0%, #f8fafc 50%, #0b0f19 50%, #0b0f19 100%)",
@@ -126,6 +133,14 @@ export default function Settings({
   const [mountLoading, setMountLoading] = React.useState(false);
   const [mountSaving, setMountSaving] = React.useState(false);
   const [mountInitial, setMountInitial] = React.useState({ enabled: false, copy: true });
+  const [storageTemplate, setStorageTemplate] = React.useState("{folder}/{model}/{filename}");
+  const [storageInitial, setStorageInitial] = React.useState("{folder}/{model}/{filename}");
+  const [storageTokens, setStorageTokens] = React.useState<string[]>([]);
+  const [storageSample, setStorageSample] = React.useState("");
+  const [storageApplyExisting, setStorageApplyExisting] = React.useState(false);
+  const [storageLoading, setStorageLoading] = React.useState(false);
+  const [storageSaving, setStorageSaving] = React.useState(false);
+  const [storageStatus, setStorageStatus] = React.useState<string | null>(null);
   const [scanRawEntries, setScanRawEntries] = React.useState<UploadEntry[]>([]);
   const [scanEntries, setScanEntries] = React.useState<UploadEntry[]>([]);
   const [scanRoot, setScanRoot] = React.useState("");
@@ -288,6 +303,34 @@ export default function Settings({
       setMountSaving(false);
     }
   };
+  const saveStorageSettings = async () => {
+    setStorageSaving(true);
+    setStorageStatus(null);
+    try {
+      const data = await updateStorageSettings({
+        template: storageTemplate,
+        apply_existing: storageApplyExisting,
+      });
+      setStorageTemplate(data.template);
+      setStorageInitial(data.template);
+      setStorageTokens(data.allowed_tokens || []);
+      setStorageSample(data.sample_path || "");
+      setStorageApplyExisting(false);
+      setStorageStatus(
+        storageApplyExisting
+          ? `Saved. Moved ${data.moved} file(s)${data.skipped ? `; skipped ${data.skipped}` : ""}.`
+          : "Storage structure saved for new and updated models."
+      );
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        onUnauthorized?.();
+      } else {
+        setStorageStatus(err instanceof Error ? err.message : "Failed to save storage settings.");
+      }
+    } finally {
+      setStorageSaving(false);
+    }
+  };
   const updateNetwork = (patch: Partial<AppSettings["network"]>) => {
     onChange({
       ...settings,
@@ -295,6 +338,12 @@ export default function Settings({
         ...settings.network,
         ...patch,
       },
+    });
+  };
+  const updatePreviews = (mode: PreviewMode) => {
+    onChange({
+      ...settings,
+      previews: { mode },
     });
   };
 
@@ -337,6 +386,29 @@ export default function Settings({
     if (section !== "network") return;
     setNetworkDraft(settings.network.publicUrl || "");
   }, [section, settings.network.publicUrl]);
+
+  React.useEffect(() => {
+    if (section !== "storage") return;
+    let active = true;
+    setStorageLoading(true);
+    setStorageStatus(null);
+    void (async () => {
+      try {
+        const data = await getStorageSettings();
+        if (!active) return;
+        setStorageTemplate(data.template);
+        setStorageInitial(data.template);
+        setStorageTokens(data.allowed_tokens || []);
+        setStorageSample(data.sample_path || "");
+      } catch (err) {
+        if (err instanceof UnauthorizedError) onUnauthorized?.();
+        else setStorageStatus("Failed to load storage settings.");
+      } finally {
+        if (active) setStorageLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [section, onUnauthorized]);
 
   React.useEffect(() => {
     if (!makerworldEditing) {
@@ -631,6 +703,158 @@ export default function Settings({
             </button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (section === "storage") {
+    const isDirty = storageTemplate.trim() !== storageInitial;
+    const previewValues: Record<string, string> = {
+      folder: "Props/Workshop",
+      collection: "Tabletop",
+      tags: "Print in place + Useful",
+      creator: "Example creator",
+      model: "Cable clip",
+      name: "Cable clip",
+      filename: "Cable clip.3mf",
+      id: "a1b2c3d4",
+    };
+    const draftSample = Object.entries(previewValues).reduce(
+      (value, [token, replacement]) => value.split(`{${token}}`).join(replacement),
+      storageTemplate.trim()
+    );
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Storage Structure</h2>
+            <p className="text-sm opacity-70">Choose how managed model files are organized on disk.</p>
+          </div>
+          <button className="text-sm px-3 py-2 rounded-md border border-panel-strong" onClick={() => setSection("root")}>Back</button>
+        </div>
+
+        <div className="rounded-lg border border-panel bg-panel-soft p-4 flex flex-col gap-4">
+          <div>
+            <div className="text-lg font-semibold">Path template</div>
+            <p className="text-sm opacity-70">
+              The model name is unique inside its MakerVault folder. Renaming a model also renames its file while preserving the extension.
+            </p>
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs uppercase tracking-wide text-muted">Template</span>
+            <input
+              value={storageTemplate}
+              onChange={e => { setStorageTemplate(e.target.value); setStorageStatus(null); }}
+              className="px-3 py-2 rounded-md border border-panel-strong bg-panel-strong font-mono text-sm"
+              placeholder="{folder}/{model}/{filename}"
+              disabled={storageLoading || storageSaving}
+            />
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {storageTokens.map(token => (
+              <button
+                key={token}
+                type="button"
+                onClick={() => setStorageTemplate(value => {
+                  const tokenText = `{${token}}`;
+                  if (token === "filename" && value.includes(tokenText)) return value;
+                  const filenameSuffix = "/{filename}";
+                  if (value.endsWith(filenameSuffix)) {
+                    return `${value.slice(0, -filenameSuffix.length)}/${tokenText}${filenameSuffix}`;
+                  }
+                  return `${value}${value.endsWith("/") || !value ? "" : "/"}${tokenText}`;
+                })}
+                className="rounded-md border border-panel-strong px-2 py-1 font-mono text-[11px]"
+              >
+                {`{${token}}`}
+              </button>
+            ))}
+          </div>
+          <div className="rounded-md border border-dashed border-panel-strong p-3">
+            <div className="text-[10px] uppercase tracking-wide text-muted">Example path</div>
+            <div className="mt-1 break-all font-mono text-xs">{draftSample || storageSample || "Enter a template to preview its path"}</div>
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={storageApplyExisting}
+              onChange={e => setStorageApplyExisting(e.target.checked)}
+              className="mt-0.5 h-4 w-4"
+              disabled={storageLoading || storageSaving}
+            />
+            <span>
+              Reorganize existing managed files now
+              <span className="block text-xs opacity-70">Mounted no-copy files are skipped. Existing URLs continue to use stable asset IDs.</span>
+            </span>
+          </label>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              className="text-sm px-3 py-2 rounded-md bg-accent disabled:opacity-60"
+              disabled={storageLoading || storageSaving || (!isDirty && !storageApplyExisting)}
+              onClick={saveStorageSettings}
+            >
+              {storageSaving ? "Saving..." : "Save storage structure"}
+            </button>
+            {storageStatus && <span className="text-xs opacity-80">{storageStatus}</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (section === "previews") {
+    const options: Array<{ id: PreviewMode; label: string; description: string }> = [
+      {
+        id: "automatic",
+        label: "Automatic",
+        description: "Load missing previews only as cards enter view, then save them for future visits.",
+      },
+      {
+        id: "on-demand",
+        label: "On demand",
+        description: "Show saved previews immediately and generate missing ones only when requested.",
+      },
+      {
+        id: "disabled",
+        label: "Disabled",
+        description: "Never generate card previews. Interactive viewing remains available by opening a model.",
+      },
+    ];
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Model Previews</h2>
+            <p className="text-sm opacity-70">Control background preview work on this browser.</p>
+          </div>
+          <button className="text-sm px-3 py-2 rounded-md border border-panel-strong" onClick={() => setSection("root")}>Back</button>
+        </div>
+        <div className="grid gap-3">
+          {options.map(option => (
+            <label
+              key={option.id}
+              className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 ${
+                settings.previews.mode === option.id ? "border-accent bg-accent-soft" : "border-panel bg-panel-soft"
+              }`}
+            >
+              <input
+                type="radio"
+                name="preview-mode"
+                value={option.id}
+                checked={settings.previews.mode === option.id}
+                onChange={() => updatePreviews(option.id)}
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                <span className="block font-medium">{option.label}</span>
+                <span className="block text-sm text-muted">{option.description}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <p className="text-xs opacity-70">
+          Embedded 3MF thumbnails and previously generated server thumbnails are always used when available.
+        </p>
       </div>
     );
   }
@@ -987,6 +1211,22 @@ export default function Settings({
           <div className="text-xs uppercase tracking-wide text-muted">Reverse Proxy</div>
           <div className="text-lg font-semibold">Public URL</div>
           <div className="text-sm opacity-70">Set the domain for proxied access.</div>
+        </button>
+        <button
+          className="text-left rounded-lg border border-panel bg-panel-soft p-4 hover:shadow"
+          onClick={() => setSection("previews")}
+        >
+          <div className="text-xs uppercase tracking-wide text-muted">Performance</div>
+          <div className="text-lg font-semibold">Model Previews</div>
+          <div className="text-sm opacity-70">Choose automatic, on-demand, or disabled preview generation.</div>
+        </button>
+        <button
+          className="text-left rounded-lg border border-panel bg-panel-soft p-4 hover:shadow"
+          onClick={() => setSection("storage")}
+        >
+          <div className="text-xs uppercase tracking-wide text-muted">Files</div>
+          <div className="text-lg font-semibold">Storage Structure</div>
+          <div className="text-sm opacity-70">Organize files with folders, model names, creators, tags, and collections.</div>
         </button>
         <button
           className="text-left rounded-lg border border-panel bg-panel-soft p-4 hover:shadow"

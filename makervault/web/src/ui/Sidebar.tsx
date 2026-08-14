@@ -1,4 +1,20 @@
 import React, { useEffect, useState } from "react";
+import {
+  Check,
+  ChevronRight,
+  Download,
+  Folder as FolderIcon,
+  FolderOpen,
+  FolderPlus,
+  Layers3,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Settings as SettingsIcon,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Folder, UnauthorizedError, createFolder, deleteFolder, downloadFolderZip, listFolders, updateFolder } from "../lib/api";
 import { entriesFromDataTransfer, uploadEntriesToFolder } from "../lib/uploadTree";
 import { buildUploadEntriesFromZip, isZipFile, readZipEntries } from "../lib/zipUtils";
@@ -40,6 +56,7 @@ export default function Sidebar({
   const [editParent, setEditParent] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropUploading, setDropUploading] = useState(false);
+  const [query, setQuery] = useState("");
   const zipPrompt = useZipImportPrompt();
 
   const uploadWithZipPrompt = async (entries: Awaited<ReturnType<typeof entriesFromDataTransfer>>, folderId: string | null) => {
@@ -194,6 +211,7 @@ export default function Sidebar({
   useEffect(() => { refresh(); }, [foldersVersion]);
 
   const startCreate = (parentId: string | null = null) => {
+    setEditing(null);
     setCreating(true);
     setNewName("");
     setNewParent(parentId ?? (selectedId || null));
@@ -214,6 +232,7 @@ export default function Sidebar({
   };
 
   const startEdit = (f: Folder) => {
+    setCreating(false);
     setEditing(f.id);
     setEditName(f.name);
     setEditTags(f.tags);
@@ -330,6 +349,24 @@ export default function Sidebar({
     return map;
   }, [folders]);
 
+  const visibleFolderIds = React.useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return null;
+
+    const visible = new Set<string>();
+    folders.forEach(folder => {
+      if (!folderPath(folder).toLocaleLowerCase().includes(normalizedQuery)) return;
+      let current: Folder | undefined = folder;
+      const guard = new Set<string>();
+      while (current && !guard.has(current.id)) {
+        visible.add(current.id);
+        guard.add(current.id);
+        current = current.parent_id ? folderById[current.parent_id] : undefined;
+      }
+    });
+    return visible;
+  }, [folderById, folderPath, folders, query]);
+
   // Default-expand root folders so they are visible
   useEffect(() => {
     const roots = childrenMap["__root"] || [];
@@ -357,191 +394,250 @@ export default function Sidebar({
     }
   };
 
-  const renderFolderNode = (folder: Folder, depth = 0) => {
-    const children = childrenMap[folder.id] || [];
+  const renderFolderNode = (folder: Folder, depth = 0): React.ReactNode => {
+    if (visibleFolderIds && !visibleFolderIds.has(folder.id)) return null;
+    const children = (childrenMap[folder.id] || []).filter(
+      child => !visibleFolderIds || visibleFolderIds.has(child.id)
+    );
     const isSelected = selectedId === folder.id;
-    const isOpen = expanded.has(folder.id);
+    const isOpen = !!query.trim() || expanded.has(folder.id);
     const isDropTarget = dropTargetId === folder.id;
     return (
-      <div key={folder.id} className="rounded-md">
+      <div key={folder.id} className="sidebar-tree-node">
         <div
-          className={`flex items-center gap-2 w-full rounded-md px-2 py-2 min-h-[38px] ${
-            isSelected ? "bg-accent-soft" : ""
-          } ${isDropTarget ? "ring-2 ring-[color:var(--mv-accent)] ring-offset-1 ring-offset-[color:var(--mv-panel-strong)]" : ""}`}
-          style={{ paddingLeft: 8 + depth * 12 }}
+          className={`sidebar-tree-row ${isSelected ? "is-selected" : ""} ${isDropTarget ? "is-drop-target" : ""}`}
+          style={{ paddingLeft: 10 }}
           onDragOver={handleDragOverTarget(folder.id)}
           onDrop={handleDropFiles(folder.id)}
         >
           {children.length ? (
             <button
               onClick={() => toggleExpand(folder.id)}
-              className="text-xs w-5 h-5 flex items-center justify-center rounded border border-transparent hover:border-panel-strong"
+              className="sidebar-tree-chevron"
               aria-label={isOpen ? "Collapse" : "Expand"}
+              aria-expanded={isOpen}
             >
-              {isOpen ? "▾" : "▸"}
+              <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`} />
             </button>
           ) : (
-            <span className="w-5 h-5" />
+            <span className="sidebar-tree-spacer" aria-hidden="true" />
           )}
-          <button className="flex-1 text-left truncate" onClick={() => onSelect(folder.id)} title={folderPath(folder)}>
-            {depth > 0 ? " - " : ""}
-            {folder.name || "Untitled"}
+          <button
+            className="sidebar-tree-label"
+            onClick={() => onSelect(folder.id)}
+            title={folderPath(folder)}
+            aria-current={isSelected ? "page" : undefined}
+          >
+            {isOpen && children.length ? (
+              <FolderOpen className="sidebar-folder-icon" aria-hidden="true" />
+            ) : (
+              <FolderIcon className="sidebar-folder-icon" aria-hidden="true" />
+            )}
+            <span className="truncate">{folder.name || "Untitled"}</span>
           </button>
-          <div className="relative">
-            <details className="group">
-              <summary className="list-none w-8 h-8 rounded-md border border-panel-strong flex items-center justify-center text-xs cursor-pointer select-none">
-                ⋯
+          <div className="relative sidebar-folder-actions">
+            <details>
+              <summary className="sidebar-action-trigger" aria-label={`Actions for ${folder.name || "Untitled"}`}>
+                <MoreHorizontal className="h-4 w-4" />
               </summary>
-              <div className="absolute right-0 mt-1 min-w-[140px] rounded-md border border-panel bg-panel-strong shadow-lg z-10">
+              <div className="sidebar-folder-menu">
                 <button
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-panel-soft disabled:opacity-60"
+                  className="sidebar-menu-item"
                   disabled={busy}
                   onClick={(e) => { closeFolderMenu(e); startCreate(folder.id); }}
                 >
-                  + Subfolder
+                  <FolderPlus className="h-4 w-4" /> Subfolder
                 </button>
                 <button
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-panel-soft disabled:opacity-60"
+                  className="sidebar-menu-item"
                   disabled={busy}
                   onClick={(e) => { closeFolderMenu(e); startEdit(folder); }}
                 >
-                  Edit
+                  <Pencil className="h-4 w-4" /> Rename &amp; edit
                 </button>
                 <button
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-panel-soft disabled:opacity-60"
+                  className="sidebar-menu-item"
                   disabled={busy}
                   onClick={(e) => { closeFolderMenu(e); downloadFolder(folder); }}
                 >
-                  Zip download
+                  <Download className="h-4 w-4" /> Download ZIP
                 </button>
                 <button
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/40 disabled:opacity-60"
+                  className="sidebar-menu-item sidebar-menu-danger"
                   disabled={busy}
                   onClick={(e) => { closeFolderMenu(e); remove(folder.id); }}
                 >
-                  Delete
+                  <Trash2 className="h-4 w-4" /> Delete
                 </button>
               </div>
             </details>
           </div>
         </div>
-        {isOpen && children.map(child => renderFolderNode(child, depth + 1))}
+        {isOpen && children.length > 0 && (
+          <div className="sidebar-tree-children">
+            {children.map(child => renderFolderNode(child, depth + 1))}
+          </div>
+        )}
       </div>
     );
   };
 
   return (
     <aside
-      className="w-64 border-r border-panel p-3 flex flex-col gap-3"
+      className="sidebar-shell"
       onDragOver={handleSidebarDragOver}
       onDragLeave={handleSidebarDragLeave}
       onDrop={handleSidebarDrop}
     >
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-muted">Location Manager</div>
-        <button className="text-sm px-2 py-1 rounded-md border border-panel-strong" onClick={() => startCreate(null)}>New</button>
+      <div className="sidebar-header">
+        <div className="min-w-0">
+          <p className="sidebar-eyebrow">Makers Vault</p>
+          <div className="flex items-center gap-2">
+            <h2 className="sidebar-title">Library</h2>
+            <span className="sidebar-count" title={`${folders.length} folders`}>{folders.length}</span>
+          </div>
+        </div>
+        <button className="sidebar-new-button" onClick={() => startCreate(null)} title="New folder">
+          <Plus className="h-4 w-4" />
+          <span>New</span>
+        </button>
       </div>
 
-      <button
-        className={`flex items-center gap-2 px-2 py-1 rounded-md border border-transparent ${
-          !selectedId ? "bg-accent-soft" : ""
-        } ${dropTargetId === DROP_ALL_ID ? "border-accent ring-2 ring-[color:var(--mv-accent)] ring-offset-1 ring-offset-[color:var(--mv-panel-strong)]" : ""}`}
-        onClick={() => onSelect(null)}
-        onDragOver={handleDragOverTarget(DROP_ALL_ID)}
-        onDrop={handleDropFiles(null)}
-      >
-        <span>All Items</span>
-      </button>
+      <label className="sidebar-search">
+        <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder="Search folders"
+          aria-label="Search folders"
+        />
+        {query && (
+          <button type="button" onClick={() => setQuery("")} aria-label="Clear folder search">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </label>
 
-      <div className="flex flex-col gap-1">
-        {(childrenMap["__root"] || []).map(f => renderFolderNode(f, 0))}
-        {folders.length === 0 && <div className="text-sm opacity-60 px-2">No folders yet</div>}
-      </div>
+      <nav className="sidebar-navigation" aria-label="Library folders">
+        <button
+          className={`sidebar-all-items ${!selectedId ? "is-selected" : ""} ${dropTargetId === DROP_ALL_ID ? "is-drop-target" : ""}`}
+          onClick={() => onSelect(null)}
+          onDragOver={handleDragOverTarget(DROP_ALL_ID)}
+          onDrop={handleDropFiles(null)}
+        >
+          <span className="sidebar-all-icon"><Layers3 className="h-4 w-4" /></span>
+          <span className="flex-1 text-left">All files</span>
+          <span className="sidebar-root-label">ROOT</span>
+        </button>
+
+        <div className="sidebar-section-heading">
+          <span>Folders</span>
+          <span>{visibleFolderIds ? visibleFolderIds.size : folders.length}</span>
+        </div>
+
+        <div className="sidebar-tree">
+          {(childrenMap["__root"] || []).map(f => renderFolderNode(f, 0))}
+          {folders.length === 0 && (
+            <div className="sidebar-empty">
+              <FolderPlus className="h-5 w-5" />
+              <span>No folders yet</span>
+              <button onClick={() => startCreate(null)}>Create your first folder</button>
+            </div>
+          )}
+          {!!folders.length && visibleFolderIds?.size === 0 && (
+            <div className="sidebar-empty">
+              <Search className="h-5 w-5" />
+              <span>No matching folders</span>
+              <button onClick={() => setQuery("")}>Clear search</button>
+            </div>
+          )}
+        </div>
+      </nav>
 
       {creating && (
-        <div className="mt-2 flex flex-col gap-2">
-          <input
-            value={newName}
-            onChange={e=>setNewName(e.target.value)}
-            placeholder="Folder name"
-            className="px-2 py-1 text-sm rounded-md border border-panel-strong w-full bg-panel-strong text-foreground"
-          />
-          <select
-            value={newParent || ""}
-            onChange={e => setNewParent(e.target.value || null)}
-            className="px-2 py-1 text-sm rounded-md border border-panel-strong w-full bg-panel-strong text-foreground"
-          >
-            {folderOptions.map(opt => (
-              <option key={opt.id ?? "root"} value={opt.id || ""}>{opt.name}</option>
-            ))}
-          </select>
-          <div className="flex gap-2">
-            <button disabled={busy} className="text-sm px-3 py-1 rounded-md bg-accent flex-1" onClick={create}>Create</button>
-            <button className="text-sm px-3 py-1 rounded-md border border-panel-strong flex-1" onClick={()=>{ setCreating(false); setNewParent(null); }}>Cancel</button>
+        <div className="sidebar-editor" role="dialog" aria-label="Create folder">
+          <div className="sidebar-editor-heading">
+            <span className="sidebar-editor-icon"><FolderPlus className="h-4 w-4" /></span>
+            <div><strong>New folder</strong><small>Choose a name and location</small></div>
+            <button onClick={() => { setCreating(false); setNewParent(null); }} aria-label="Cancel"><X className="h-4 w-4" /></button>
+          </div>
+          <label>
+            <span>Name</span>
+            <input
+              autoFocus
+              value={newName}
+              onChange={e=>setNewName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") void create();
+                if (e.key === "Escape") { setCreating(false); setNewParent(null); }
+              }}
+              placeholder="Folder name"
+            />
+          </label>
+          <label>
+            <span>Location</span>
+            <select value={newParent || ""} onChange={e => setNewParent(e.target.value || null)}>
+              {folderOptions.map(opt => (
+                <option key={opt.id ?? "root"} value={opt.id || ""}>{opt.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="sidebar-editor-actions">
+            <button disabled={busy || !newName.trim()} className="primary" onClick={create}><Check className="h-4 w-4" /> Create</button>
+            <button onClick={()=>{ setCreating(false); setNewParent(null); }}>Cancel</button>
           </div>
         </div>
       )}
 
       {editing && (
-        <div className="mt-2 flex flex-col gap-2">
-          <input
-            value={editName}
-            onChange={e=>setEditName(e.target.value)}
-            className="px-2 py-1 text-sm rounded-md border border-panel-strong bg-panel-strong text-foreground"
-          />
-          <select
-            value={editParent || ""}
-            onChange={e => setEditParent(e.target.value || null)}
-            className="px-2 py-1 text-sm rounded-md border border-panel-strong bg-panel-strong text-foreground"
-          >
-            {folderOptions
-              .filter(opt => !editing || (opt.id !== editing && !(opt.id && isDescendant(opt.id, editing))))
-              .map(opt => (
-                <option key={opt.id ?? "root"} value={opt.id || ""}>{opt.name}</option>
-              ))}
-          </select>
+        <div className="sidebar-editor" role="dialog" aria-label="Edit folder">
+          <div className="sidebar-editor-heading">
+            <span className="sidebar-editor-icon"><Pencil className="h-4 w-4" /></span>
+            <div><strong>Edit folder</strong><small>Update its details</small></div>
+            <button onClick={()=>{ setEditing(null); setEditTags([]); setEditParent(null); }} aria-label="Cancel"><X className="h-4 w-4" /></button>
+          </div>
+          <label>
+            <span>Name</span>
+            <input
+              autoFocus
+              value={editName}
+              onChange={e=>setEditName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") void saveEdit();
+                if (e.key === "Escape") { setEditing(null); setEditTags([]); setEditParent(null); }
+              }}
+            />
+          </label>
+          <label>
+            <span>Location</span>
+            <select value={editParent || ""} onChange={e => setEditParent(e.target.value || null)}>
+              {folderOptions
+                .filter(opt => !editing || (opt.id !== editing && !(opt.id && isDescendant(opt.id, editing))))
+                .map(opt => (
+                  <option key={opt.id ?? "root"} value={opt.id || ""}>{opt.name}</option>
+                ))}
+            </select>
+          </label>
           <TagInput value={editTags} onChange={setEditTags} placeholder="Add folder tags" />
-          <div className="flex items-center gap-2">
-            <button disabled={busy} className="text-sm px-2 py-1 rounded-md bg-accent" onClick={saveEdit}>Save</button>
-            <button className="text-sm px-2 py-1 rounded-md border border-panel-strong" onClick={()=>{ setEditing(null); setEditTags([]); setEditParent(null); }}>Cancel</button>
+          <div className="sidebar-editor-actions">
+            <button disabled={busy} className="primary" onClick={saveEdit}><Check className="h-4 w-4" /> Save changes</button>
+            <button onClick={()=>{ setEditing(null); setEditTags([]); setEditParent(null); }}>Cancel</button>
           </div>
         </div>
       )}
 
-      <div className="mt-auto pt-2 border-t border-panel">
+      <div className="sidebar-footer">
         <button
           type="button"
           onClick={onOpenSettings}
-          className={`w-full flex items-center gap-2 px-2 py-2 rounded-md border ${
-            activeView === "settings"
-              ? "bg-accent-soft border-accent-soft"
-              : "border-panel-strong hover:bg-panel-soft"
-          }`}
+          className={`sidebar-settings ${activeView === "settings" ? "is-selected" : ""}`}
           aria-label="Settings"
         >
-          <GearIcon className="w-4 h-4" />
-          <span className="text-sm">Settings</span>
+          <SettingsIcon className="h-4 w-4" />
+          <span>Settings</span>
         </button>
       </div>
       {zipPrompt.modal}
     </aside>
-  );
-}
-
-function GearIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.54V21a2 2 0 0 1-4 0v-.08a1.7 1.7 0 0 0-1-1.54 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.54-1H3a2 2 0 0 1 0-4h.08a1.7 1.7 0 0 0 1.54-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34 1.7 1.7 0 0 0 1-1.54V3a2 2 0 0 1 4 0v.08a1.7 1.7 0 0 0 1 1.54 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87 1.7 1.7 0 0 0 1.54 1H21a2 2 0 0 1 0 4h-.08a1.7 1.7 0 0 0-1.54 1z" />
-    </svg>
   );
 }

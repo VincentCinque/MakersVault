@@ -6,7 +6,7 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
-from asset_service import asset_path, cleanup_asset, create_asset_record, finalize_asset_record, save_thumb
+from asset_service import cleanup_asset, create_asset_record, ensure_model_thumbnail, finalize_asset_record, managed_asset_path, save_thumb
 from config import (
     DEFAULT_MOUNT_IMPORT_EXTS,
     IMPORT_MAX_BYTES,
@@ -125,13 +125,18 @@ def scan_mount_imports() -> None:
                 )
                 try:
                     if copy_files:
-                        dest = asset_path(asset.id, asset.filename)
+                        dest = managed_asset_path(asset)
+                        dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(path, dest)
                         if (mime or "").startswith("image/") and dest.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
                             save_thumb(asset.id, dest)
+                        elif dest.suffix.lower() == ".3mf":
+                            ensure_model_thumbnail(asset.id, dest)
                     else:
                         if (mime or "").startswith("image/") and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
                             save_thumb(asset.id, path)
+                        elif path.suffix.lower() == ".3mf":
+                            ensure_model_thumbnail(asset.id, path)
                     finalize_asset_record(asset.id, size, mime)
                     imported += 1
                     existing_sources.add(source_path)

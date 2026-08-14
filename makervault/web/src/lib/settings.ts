@@ -64,6 +64,12 @@ export type NetworkSettings = {
   publicUrl: string;
 };
 
+export type PreviewMode = "automatic" | "on-demand" | "disabled";
+
+export type PreviewSettings = {
+  mode: PreviewMode;
+};
+
 export type AppSettings = {
   slicer: SlicerSettings;
   engraving: EngravingSettings;
@@ -71,6 +77,7 @@ export type AppSettings = {
   makerworld: MakerWorldSettings;
   thingiverse: ThingiverseSettings;
   network: NetworkSettings;
+  previews: PreviewSettings;
 };
 
 const STORAGE_KEY = "makersvault_settings";
@@ -96,6 +103,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   network: {
     publicUrl: "",
+  },
+  previews: {
+    mode: "automatic",
   },
 };
 
@@ -127,6 +137,10 @@ export function loadSettings(): AppSettings {
       : DEFAULT_SETTINGS.thingiverse.cookie;
     const network = parsed.network || {};
     const publicUrl = typeof network.publicUrl === "string" ? network.publicUrl : DEFAULT_SETTINGS.network.publicUrl;
+    const previews = parsed.previews || {};
+    const previewMode = ["automatic", "on-demand", "disabled"].includes(previews.mode)
+      ? previews.mode as PreviewMode
+      : DEFAULT_SETTINGS.previews.mode;
     if (!themeValid) {
       const legacy = window.localStorage.getItem(LEGACY_THEME_KEY);
       if (legacy === "light" || legacy === "dark") {
@@ -155,6 +169,9 @@ export function loadSettings(): AppSettings {
       },
       network: {
         publicUrl,
+      },
+      previews: {
+        mode: previewMode,
       },
     };
   } catch {

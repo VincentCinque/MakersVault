@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Asset,
+  AssetFile,
+  PreparedPrint,
   Folder,
   UnauthorizedError,
   deleteAsset,
@@ -8,18 +10,21 @@ import {
   listAssets,
   listTags,
   listFolders,
-  renameAsset,
   setTags,
   updateAssetFolder,
   updateAssetMeta,
   downloadZip,
+  deleteAssetFile,
+  deletePreparedPrint,
+  listAssetFiles,
+  uploadAssetFile,
 } from "../lib/api";
 import ModelViewer, { ModelSnapshot } from "./ModelViewer";
 import LightBurnPreview from "./LightBurnPreview";
 import TagBadge from "./TagBadge";
 import TagInput from "./TagInput";
 import { colorForTag } from "./tagColors";
-import { EngravingSettings, ResolvedTheme, SlicerSettings, engraverLabelFor, slicerLabelFor } from "../lib/settings";
+import { EngravingSettings, PreviewSettings, ResolvedTheme, SlicerSettings, engraverLabelFor, slicerLabelFor } from "../lib/settings";
 import { entriesFromDataTransfer, uploadEntriesToFolder } from "../lib/uploadTree";
 import { buildUploadEntriesFromZip, isZipFile, readZipEntries } from "../lib/zipUtils";
 import { useZipImportPrompt } from "./ZipImportModal";
@@ -66,6 +71,7 @@ type Props = {
   onUnauthorized?: () => void;
   slicerSettings?: SlicerSettings;
   engravingSettings?: EngravingSettings;
+  previewSettings?: PreviewSettings;
   theme: ResolvedTheme;
 };
 
@@ -78,6 +84,7 @@ export default function AssetGrid({
   onUnauthorized,
   slicerSettings,
   engravingSettings,
+  previewSettings,
   theme,
 }: Props) {
   const [items, setItems] = useState<Asset[]>([]);
@@ -119,6 +126,11 @@ export default function AssetGrid({
     console.error(err);
     if (message) alert(message);
     return false;
+  };
+
+  const replaceAsset = (updated: Asset) => {
+    setItems(current => current.map(item => item.id === updated.id ? updated : item));
+    setPreviewItem(current => current?.id === updated.id ? updated : current);
   };
 
   const refresh = async (opts: RefreshOpts = {}) => {
@@ -474,21 +486,22 @@ export default function AssetGrid({
     }
   };
 
-  const onSaveNotes = async (id: string, notes: string) => {
+  const onSaveDetails = async (id: string, payload: { notes: string; creator: string; collection: string }) => {
     try {
-      await updateAssetMeta(id, { notes });
+      await updateAssetMeta(id, payload);
       await refresh();
     } catch (err) {
-      handleApiError(err, "Failed to save notes. Please try again.");
+      handleApiError(err, err instanceof Error ? err.message : "Failed to save model details.");
     }
   };
 
-  const onRename = async (id: string, filename: string) => {
+  const onRename = async (id: string, name: string) => {
     try {
-      await renameAsset(id, filename);
+      await updateAssetMeta(id, { name });
       await refresh();
     } catch (err) {
-      handleApiError(err, "Rename failed. Please try again.");
+      handleApiError(err, err instanceof Error ? err.message : "Rename failed. Please try again.");
+      throw err;
     }
   };
 
@@ -499,7 +512,7 @@ export default function AssetGrid({
       await refresh();
     } catch (err) {
       if (!handleApiError(err)) {
-        alert("Folder update failed. Please try again.");
+        alert(err instanceof Error ? err.message : "Folder update failed. Please try again.");
       }
     } finally {
       setMovingId(null);
@@ -528,11 +541,11 @@ export default function AssetGrid({
 
   const openInSlicer = (asset: Asset) => {
     if (!slicerEnabled) return;
-    const url = fileUrl(asset.url);
+    const url = fileUrl(asset.slicer_url || asset.url);
     const params = new URLSearchParams({
       url,
       slicer: slicerSettings?.selected || "orca",
-      filename: asset.filename || "model",
+      filename: asset.slicer_filename || asset.filename || "model",
     });
     const target = `makersvault-slicer://open?${params.toString()}`;
     window.location.href = target;
@@ -742,7 +755,7 @@ export default function AssetGrid({
                           <AssetCard
                             item={it}
                             onSaveTags={onSaveTags}
-                            onSaveNotes={onSaveNotes}
+                            onSaveDetails={onSaveDetails}
                             onRename={onRename}
                             onPreview={setPreviewItem}
                             onDownloadSingle={downloadAsset}
@@ -765,6 +778,8 @@ export default function AssetGrid({
                             engraverLabel={engraverLabel}
                             onOpenInEngraving={openInEngraving}
                             theme={theme}
+                            previewMode={previewSettings?.mode || "automatic"}
+                            onAssetChanged={replaceAsset}
                           />
                         </div>
                       ))}
@@ -785,7 +800,7 @@ export default function AssetGrid({
               key={it.id}
               item={it}
               onSaveTags={onSaveTags}
-              onSaveNotes={onSaveNotes}
+              onSaveDetails={onSaveDetails}
               onRename={onRename}
               onPreview={setPreviewItem}
               onDownloadSingle={downloadAsset}
@@ -808,6 +823,8 @@ export default function AssetGrid({
               engraverLabel={engraverLabel}
               onOpenInEngraving={openInEngraving}
               theme={theme}
+              previewMode={previewSettings?.mode || "automatic"}
+              onAssetChanged={replaceAsset}
             />
           ))}
         </div>
@@ -835,7 +852,7 @@ export default function AssetGrid({
 function AssetCard({
   item,
   onSaveTags,
-  onSaveNotes,
+  onSaveDetails,
   onRename,
   onPreview,
   onDownloadSingle,
@@ -858,10 +875,12 @@ function AssetCard({
   engraverLabel,
   onOpenInEngraving,
   theme,
+  previewMode,
+  onAssetChanged,
 }: {
   item: Asset;
   onSaveTags: (id: string, tags: string[]) => void;
-  onSaveNotes: (id: string, notes: string) => void;
+  onSaveDetails: (id: string, payload: { notes: string; creator: string; collection: string }) => void;
   onRename: (id: string, filename: string) => void;
   onPreview: (asset: Asset | null) => void;
   onDownloadSingle: (asset: Asset) => void;
@@ -884,16 +903,26 @@ function AssetCard({
   engraverLabel: string;
   onOpenInEngraving: (asset: Asset) => void;
   theme: ResolvedTheme;
+  previewMode: PreviewSettings["mode"];
+  onAssetChanged: (asset: Asset) => void;
 }) {
   const [editingTags, setEditingTags] = useState(false);
   const [tagList, setTagList] = useState<string[]>(item.tags);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState(item.notes || "");
+  const [creatorValue, setCreatorValue] = useState(item.creator || "");
+  const [collectionValue, setCollectionValue] = useState(item.collection || "");
   const [notesCollapsed, setNotesCollapsed] = useState(true);
   const [renaming, setRenaming] = useState(false);
-  const [nameValue, setNameValue] = useState(item.filename);
+  const [nameValue, setNameValue] = useState(item.name);
   const nameInputRef = React.useRef<HTMLInputElement | null>(null);
   const [downloadChoice, setDownloadChoice] = useState("");
+  const [filesExpanded, setFilesExpanded] = useState(false);
+  const [supportingFiles, setSupportingFiles] = useState<AssetFile[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesUploading, setFilesUploading] = useState(false);
+  const [preparedClearing, setPreparedClearing] = useState(false);
+  const relatedInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!editingTags) {
@@ -904,16 +933,80 @@ function AssetCard({
   useEffect(() => {
     if (!editingNotes) {
       setNotesValue(item.notes || "");
+      setCreatorValue(item.creator || "");
+      setCollectionValue(item.collection || "");
     }
-  }, [item.notes, editingNotes]);
+  }, [item.notes, item.creator, item.collection, editingNotes]);
 
   useEffect(() => {
     if (!renaming) {
-      setNameValue(item.filename);
+      setNameValue(item.name);
     } else {
       setTimeout(() => nameInputRef.current?.select(), 0);
     }
-  }, [item.filename, renaming]);
+  }, [item.name, renaming]);
+
+  const loadSupportingFiles = async () => {
+    setFilesLoading(true);
+    try {
+      setSupportingFiles(await listAssetFiles(item.id));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Failed to load supporting files");
+    } finally {
+      setFilesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (filesExpanded) void loadSupportingFiles();
+  }, [filesExpanded, item.id]);
+
+  const addRelatedFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    setFilesUploading(true);
+    try {
+      let updated = item;
+      for (const file of files) {
+        updated = await uploadAssetFile(item.id, file);
+        onAssetChanged(updated);
+      }
+      setSupportingFiles(await listAssetFiles(item.id));
+      setFilesExpanded(true);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Failed to add files");
+    } finally {
+      setFilesUploading(false);
+    }
+  };
+
+  const removeRelatedFile = async (file: AssetFile) => {
+    if (!window.confirm(`Remove ${file.filename} from this model?`)) return;
+    try {
+      const updated = await deleteAssetFile(item.id, file.id);
+      onAssetChanged(updated);
+      setSupportingFiles(current => current.filter(entry => entry.id !== file.id));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Failed to remove file");
+    }
+  };
+
+  const clearPreparedPrint = async () => {
+    if (!window.confirm("Clear the attached prepared print from this model?")) return;
+    setPreparedClearing(true);
+    try {
+      onAssetChanged(await deletePreparedPrint(item.id));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Failed to clear prepared print");
+    } finally {
+      setPreparedClearing(false);
+    }
+  };
 
   const startEditing = () => {
     setTagList(item.tags);
@@ -931,13 +1024,19 @@ function AssetCard({
   };
 
   const saveNotes = async () => {
-    await onSaveNotes(item.id, notesValue);
+    await onSaveDetails(item.id, {
+      notes: notesValue,
+      creator: creatorValue,
+      collection: collectionValue,
+    });
     setEditingNotes(false);
   };
 
   const cancelNotes = () => {
     setEditingNotes(false);
     setNotesValue(item.notes || "");
+    setCreatorValue(item.creator || "");
+    setCollectionValue(item.collection || "");
   };
 
   const noteText = (item.notes || "").trim();
@@ -945,11 +1044,11 @@ function AssetCard({
   const commitRename = async () => {
     const next = nameValue.trim();
     if (!next) {
-      setNameValue(item.filename);
+      setNameValue(item.name);
       setRenaming(false);
       return;
     }
-    if (next === item.filename) {
+    if (next === item.name) {
       setRenaming(false);
       return;
     }
@@ -958,14 +1057,14 @@ function AssetCard({
     } catch (err) {
       console.error(err);
       alert("Rename failed");
-      setNameValue(item.filename);
+      setNameValue(item.name);
     } finally {
       setRenaming(false);
     }
   };
 
   const cancelRename = () => {
-    setNameValue(item.filename);
+    setNameValue(item.name);
     setRenaming(false);
   };
 
@@ -999,7 +1098,7 @@ function AssetCard({
     }
   };
 
-  const canOpenInSlicer = slicerEnabled && MODEL_EXTS.has(extOf(item.filename));
+  const canOpenInSlicer = slicerEnabled && (Boolean(item.prepared_print) || MODEL_EXTS.has(extOf(item.filename)));
   const canOpenInEngraving = engravingEnabled && ENGRAVING_EXTS.has(extOf(item.filename));
 
   return (
@@ -1010,9 +1109,16 @@ function AssetCard({
         title="Double-click to open large preview"
         onClick={e => e.stopPropagation()}
       >
-        {renderPreviewContent(item, "card", theme)}
+        {renderPreviewContent(item, "card", theme, previewMode)}
       </div>
       <div className="p-3 flex flex-col gap-2">
+        {item.prepared_print && (
+          <PreparedPrintSummary
+            prepared={item.prepared_print}
+            onClear={item.prepared_print.removable ? clearPreparedPrint : undefined}
+            clearing={preparedClearing}
+          />
+        )}
         <div className="flex items-center justify-between gap-2">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -1083,7 +1189,7 @@ function AssetCard({
         </div>
         <div
           className="text-sm font-medium truncate cursor-text"
-          title={item.filename}
+          title={`${item.name} · ${item.filename}`}
           onDoubleClick={e => { e.stopPropagation(); setRenaming(true); }}
           onClick={e => renaming && e.stopPropagation()}
         >
@@ -1099,9 +1205,16 @@ function AssetCard({
               autoFocus
             />
           ) : (
-            item.title || item.filename
+            item.name
           )}
         </div>
+        <div className="text-[11px] truncate text-subtle" title={item.filename}>{item.filename}</div>
+        {(item.creator || item.collection) && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+            {item.creator && <span>By {item.creator}</span>}
+            {item.collection && <span>Collection: {item.collection}</span>}
+          </div>
+        )}
         <div className="flex flex-wrap gap-1">
           {item.tags.length ? (
             item.tags.map(t => <TagBadge key={t} tag={t} />)
@@ -1109,9 +1222,73 @@ function AssetCard({
             <span className="text-xs opacity-60">No tags</span>
           )}
         </div>
+        <div className="rounded-md border border-panel-strong bg-panel-strong/40 text-sm">
+          <div className="flex items-center justify-between gap-2 p-2">
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-2 text-left"
+              onClick={() => setFilesExpanded(value => !value)}
+            >
+              <span className="font-medium">Supporting files</span>
+              <span className="rounded-full bg-panel px-2 py-0.5 text-[11px] text-muted">
+                {item.supporting_file_count || 0}
+              </span>
+            </button>
+            <>
+              <input
+                ref={relatedInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept=".pdf,.txt,.md,.doc,.docx,.rtf,.csv,.html,.zip,.gcode,.gco,.bgcode,.3mf"
+                onChange={addRelatedFiles}
+              />
+              <button
+                type="button"
+                className="rounded-md border border-panel-strong px-2 py-1 text-xs disabled:opacity-60"
+                disabled={filesUploading}
+                onClick={() => relatedInputRef.current?.click()}
+                title="Add documentation or a prepared print"
+              >
+                {filesUploading ? "Adding..." : "Add files"}
+              </button>
+            </>
+          </div>
+          {filesExpanded && (
+            <div className="border-t border-panel px-2 py-2">
+              {filesLoading ? (
+                <div className="text-xs text-muted">Loading files...</div>
+              ) : supportingFiles.length ? (
+                <div className="space-y-1">
+                  {supportingFiles.map(file => (
+                    <div key={file.id} className="flex items-center justify-between gap-2 rounded px-1 py-1 hover:bg-panel-soft">
+                      <a
+                        className="min-w-0 truncate text-xs underline-offset-2 hover:underline"
+                        href={fileUrl(file.url)}
+                        download={file.filename}
+                        title={file.filename}
+                      >
+                        {file.filename}
+                      </a>
+                      <button
+                        type="button"
+                        className="text-[11px] text-red-700 dark:text-red-300"
+                        onClick={() => removeRelatedFile(file)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-muted">Add assembly instructions, notes, other documentation, or a prepared print.</div>
+              )}
+            </div>
+          )}
+        </div>
         <div className="border border-dashed border-panel-strong rounded-md p-2 text-sm flex flex-col gap-2">
           <div className="flex items-center justify-between text-xs uppercase tracking-wide text-muted">
-            <span>Notes</span>
+            <span>Model details</span>
             <button
               className="text-[11px] px-2 py-0.5 rounded-md border border-panel-strong"
               onClick={() => setNotesCollapsed(v => !v)}
@@ -1123,12 +1300,33 @@ function AssetCard({
             <>
               {editingNotes ? (
                 <>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wide text-muted">Creator</span>
+                    <input
+                      value={creatorValue}
+                      onChange={e => setCreatorValue(e.target.value)}
+                      className="w-full rounded-md border border-panel-strong bg-panel-soft px-2 py-1.5"
+                      placeholder="Designer or source"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wide text-muted">Collection</span>
+                    <input
+                      value={collectionValue}
+                      onChange={e => setCollectionValue(e.target.value)}
+                      className="w-full rounded-md border border-panel-strong bg-panel-soft px-2 py-1.5"
+                      placeholder="Collection name"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wide text-muted">Notes</span>
                   <textarea
                     value={notesValue}
                     onChange={e => setNotesValue(e.target.value)}
                     className="w-full min-h-[80px] rounded-md border border-panel-strong bg-panel-soft p-2"
                     placeholder="Add some details about this asset"
                   />
+                  </label>
                   <div className="flex flex-wrap gap-2">
                     <button className="text-sm px-3 py-1 rounded-md bg-accent" onClick={saveNotes}>Save</button>
                     <button className="text-sm px-3 py-1 rounded-md border border-panel-strong" onClick={cancelNotes}>Cancel</button>
@@ -1136,6 +1334,10 @@ function AssetCard({
                 </>
               ) : (
                 <>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div><span className="block text-[10px] uppercase text-muted">Creator</span>{item.creator || "Not set"}</div>
+                    <div><span className="block text-[10px] uppercase text-muted">Collection</span>{item.collection || "Not set"}</div>
+                  </div>
                   <div className={`text-sm whitespace-pre-wrap ${noteText ? "text-foreground" : "opacity-60"}`}>
                     {noteText || "Add notes"}
                   </div>
@@ -1143,7 +1345,7 @@ function AssetCard({
                     className="self-start text-xs px-2 py-1 rounded-md border border-panel-strong"
                     onClick={() => setEditingNotes(true)}
                   >
-                    {noteText ? "Edit notes" : "Add notes"}
+                    Edit details
                   </button>
                 </>
               )}
@@ -1151,7 +1353,9 @@ function AssetCard({
           )}
           {notesCollapsed && (
             <div className={`text-sm ${noteText ? "text-foreground" : "opacity-60"}`}>
-              {noteText ? `${noteText.slice(0, 60)}${noteText.length > 60 ? "..." : ""}` : "No notes"}
+              {noteText
+                ? `${noteText.slice(0, 60)}${noteText.length > 60 ? "..." : ""}`
+                : [item.creator, item.collection].filter(Boolean).join(" · ") || "No details"}
             </div>
           )}
         </div>
@@ -1185,9 +1389,58 @@ function AssetCard({
   );
 }
 
+function formatPreparedDuration(totalSeconds?: number | null) {
+  if (!totalSeconds || totalSeconds < 1) return null;
+  const roundedMinutes = Math.max(1, Math.round(totalSeconds / 60));
+  const days = Math.floor(roundedMinutes / 1440);
+  const hours = Math.floor((roundedMinutes % 1440) / 60);
+  const minutes = roundedMinutes % 60;
+  return [
+    days ? `${days}d` : "",
+    hours ? `${hours}h` : "",
+    minutes ? `${minutes}m` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function PreparedPrintSummary({
+  prepared,
+  onClear,
+  clearing = false,
+}: {
+  prepared: PreparedPrint;
+  onClear?: () => void;
+  clearing?: boolean;
+}) {
+  const details = [
+    prepared.material,
+    prepared.nozzle_mm ? `${prepared.nozzle_mm} mm` : null,
+    formatPreparedDuration(prepared.estimated_seconds),
+  ].filter(Boolean);
+  return (
+    <div className="flex items-start justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs text-emerald-950 dark:text-emerald-100">
+      <span>
+        <span className="font-semibold">
+          {prepared.printer ? `Prepared for ${prepared.printer}` : "Prepared print available"}
+        </span>
+        {details.length > 0 && <span> · {details.join(" · ")}</span>}
+      </span>
+      {onClear && (
+        <button type="button" className="shrink-0 underline-offset-2 hover:underline disabled:opacity-60" onClick={onClear} disabled={clearing}>
+          {clearing ? "Clearing..." : "Clear"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 type PreviewVariant = "card" | "modal";
 
-function renderPreviewContent(asset: Asset, variant: PreviewVariant, theme: ResolvedTheme) {
+function renderPreviewContent(
+  asset: Asset,
+  variant: PreviewVariant,
+  theme: ResolvedTheme,
+  previewMode: PreviewSettings["mode"] = "automatic"
+) {
   const ext = extOf(asset.filename);
   const assetUrl = fileUrl(asset.url);
   const thumbUrl = asset.thumb_url ? fileUrl(asset.thumb_url) : null;
@@ -1206,7 +1459,10 @@ function renderPreviewContent(asset: Asset, variant: PreviewVariant, theme: Reso
       return <img src={assetUrl} alt={asset.filename} className={imgClass} />;
     }
     if (is3d) {
-      return <ModelSnapshot url={assetUrl} ext={ext} assetId={asset.id} theme={theme} />;
+      if (previewMode === "disabled") {
+        return <div className="flex h-full w-full items-center justify-center text-xs text-muted">Preview generation disabled</div>;
+      }
+      return <ModelSnapshot url={assetUrl} ext={ext} assetId={asset.id} theme={theme} mode={previewMode} />;
     }
     if (isLightBurn) {
       return (
@@ -1262,10 +1518,18 @@ function AssetPreviewModal({ asset, theme, onClose }: { asset: Asset; theme: Res
       >
         <div className="flex items-center justify-between border-b border-panel px-4 py-3">
           <div>
-            <h2 className="text-lg font-semibold">{asset.title || asset.filename}</h2>
+            <h2 className="text-lg font-semibold">{asset.name}</h2>
             <p className="text-sm opacity-70">
               {asset.filename} · {formatFileSize(asset.size)}
             </p>
+            {(asset.creator || asset.collection) && (
+              <p className="text-xs text-muted">
+                {[asset.creator ? `By ${asset.creator}` : "", asset.collection ? `Collection: ${asset.collection}` : ""].filter(Boolean).join(" · ")}
+              </p>
+            )}
+            {asset.prepared_print && (
+              <div className="mt-2"><PreparedPrintSummary prepared={asset.prepared_print} /></div>
+            )}
           </div>
           <button
             className="px-3 py-1 rounded-md border border-panel-strong text-sm"

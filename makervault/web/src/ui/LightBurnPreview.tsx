@@ -111,7 +111,7 @@ async function extractLightBurnPreview(bytes: Uint8Array): Promise<PreviewPayloa
 async function extractFromZip(bytes: Uint8Array): Promise<PreviewPayload | null> {
   const zipSlice = findZipSlice(bytes);
   if (!zipSlice) return null;
-  const { unzipSync } = await import("three/examples/jsm/libs/fflate.module.js");
+  const { unzipSync } = await import("fflate");
   let entries: Record<string, Uint8Array>;
   try {
     entries = unzipSync(zipSlice);

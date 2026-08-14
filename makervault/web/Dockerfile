@@ -1,18 +1,26 @@
-FROM node:20-alpine
+FROM node:20-alpine AS dependencies
 WORKDIR /app
 
-RUN apk add --no-cache su-exec
-
-# Install deps first for better layer caching
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
 
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# Copy source
+FROM dependencies AS test
 COPY . .
+RUN npm run verify
+CMD ["npm", "run", "verify"]
+
+FROM dependencies AS build
+COPY . .
+RUN npm run build
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+USER root
+COPY 40-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+RUN chmod +x /docker-entrypoint.d/40-runtime-config.sh \
+  && chown -R 101:101 /usr/share/nginx/html
+USER 101
 
 EXPOSE 5173
-ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["npm", "run", "dev", "--", "--host"]
+CMD ["nginx", "-g", "daemon off;"]

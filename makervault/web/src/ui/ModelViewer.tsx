@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import occtWasmUrl from "occt-import-js/dist/occt-import-js.wasm?url";
 import occtWorkerUrl from "occt-import-js/dist/occt-import-js-worker.js?url";
+import { uploadGeneratedThumbnail } from "../lib/api";
 import { ResolvedTheme } from "../lib/settings";
 
 type ModelViewerProps = { url: string; ext: string; assetId?: string; theme: ResolvedTheme };
@@ -243,10 +243,18 @@ export default function ModelViewer({ url, ext, assetId, theme }: ModelViewerPro
 }
 
 type SnapshotState = "idle" | "loading" | "error";
+type ModelSnapshotProps = ModelViewerProps & { mode?: "automatic" | "on-demand" };
 
 const snapshotCache = new Map<string, string>();
 let snapshotRenderer: THREE.WebGLRenderer | null = null;
 let snapshotLock: Promise<void> = Promise.resolve();
+let snapshotJobQueue: Promise<void> = Promise.resolve();
+
+function queueSnapshotJob<T>(job: () => Promise<T>): Promise<T> {
+  const result = snapshotJobQueue.then(job, job);
+  snapshotJobQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 function createSnapshotRenderer() {
   const renderer = new THREE.WebGLRenderer({
@@ -276,14 +284,20 @@ async function acquireSnapshotRenderer() {
   return { renderer, release: unlock };
 }
 
-export function ModelSnapshot({ url, ext, assetId, theme }: ModelViewerProps) {
+export function ModelSnapshot({ url, ext, assetId, mode = "automatic" }: ModelSnapshotProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const [state, setState] = useState<SnapshotState>("idle");
+  const [requested, setRequested] = useState(mode === "automatic");
+
+  useEffect(() => {
+    if (mode === "automatic") setRequested(true);
+  }, [mode]);
 
   useEffect(() => {
     let disposed = false;
-    const cacheKey = assetId ? `asset:${assetId}:${theme}` : `${url}:${theme}`;
+    let observer: IntersectionObserver | null = null;
+    const cacheKey = assetId ? `asset:${assetId}` : url;
     if (snapshotCache.has(cacheKey)) {
       setSnapshot(snapshotCache.get(cacheKey)!);
       return;
@@ -295,11 +309,22 @@ export function ModelSnapshot({ url, ext, assetId, theme }: ModelViewerProps) {
         const rect = containerRef.current.getBoundingClientRect();
         const width = Math.max(120, Math.floor(rect.width || 240));
         const height = Math.max(120, Math.floor(rect.height || 180));
-        const image = await generateModelSnapshot(url, ext, width, height, theme);
-        if (disposed) return;
+        const image = await queueSnapshotJob(async () => {
+          if (disposed) return null;
+          return generateModelSnapshot(url, ext, width, height, "light");
+        });
+        if (disposed || !image) return;
         snapshotCache.set(cacheKey, image);
         setSnapshot(image);
         setState("idle");
+        if (assetId) {
+          try {
+            const imageBlob = await fetch(image).then(response => response.blob());
+            await uploadGeneratedThumbnail(assetId, imageBlob);
+          } catch (err) {
+            console.warn("Generated preview could not be persisted:", err);
+          }
+        }
       } catch (err) {
         console.warn("Snapshot generation failed:", err);
         if (!disposed) {
@@ -307,11 +332,25 @@ export function ModelSnapshot({ url, ext, assetId, theme }: ModelViewerProps) {
         }
       }
     };
-    load();
+    if (!requested) {
+      setState("idle");
+      return () => { disposed = true; };
+    }
+    if (mode === "automatic" && typeof IntersectionObserver !== "undefined") {
+      observer = new IntersectionObserver(entries => {
+        if (!entries.some(entry => entry.isIntersecting)) return;
+        observer?.disconnect();
+        void load();
+      }, { rootMargin: "240px" });
+      if (containerRef.current) observer.observe(containerRef.current);
+    } else {
+      void load();
+    }
     return () => {
       disposed = true;
+      observer?.disconnect();
     };
-  }, [url, ext, assetId, theme]);
+  }, [url, ext, assetId, mode, requested]);
 
   return (
     <div
@@ -322,8 +361,16 @@ export function ModelSnapshot({ url, ext, assetId, theme }: ModelViewerProps) {
         <img src={snapshot} alt="Preview" className="w-full h-full object-cover" />
       ) : state === "loading" ? (
         <span className="text-xs text-muted">Generating preview...</span>
+      ) : mode === "on-demand" && !requested ? (
+        <button
+          type="button"
+          className="rounded-md border border-panel-strong px-3 py-2 text-xs font-medium hover:bg-panel-strong"
+          onClick={event => { event.stopPropagation(); setRequested(true); }}
+        >
+          Generate preview
+        </button>
       ) : (
-        <span className="text-xs text-muted">Preview unavailable</span>
+        <span className="text-xs text-muted">Waiting to generate preview...</span>
       )}
     </div>
   );
@@ -385,7 +432,7 @@ async function loadSimple3MFGroup(url: string): Promise<THREE.Group> {
 
   let archiveParsed = false;
   try {
-    const { unzipSync } = await import("three/examples/jsm/libs/fflate.module.js");
+    const { unzipSync } = await import("fflate");
     const zipEntries = unzipSync(raw);
     const modelEntries = Object.keys(zipEntries).filter(key => /\.model$/i.test(key));
     if (modelEntries.length) {
@@ -660,7 +707,7 @@ function findElements(node: Document | Element, localName: string) {
   const direct = Array.from(node.getElementsByTagName(localName));
   if (direct.length) return direct;
   if ("getElementsByTagNameNS" in node) {
-    const nsMatches = (node as NamespacedNode).getElementsByTagNameNS("*", localName);
+    const nsMatches = (node as unknown as NamespacedNode).getElementsByTagNameNS("*", localName);
     return Array.from(nsMatches ?? []);
   }
   return [];

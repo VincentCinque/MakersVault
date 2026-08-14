@@ -1,3 +1,0 @@
-# Local storage and uploads should not be committed
-data/storage/
-slicer-bridge/dist/

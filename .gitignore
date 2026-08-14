@@ -1,0 +1,59 @@
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# Runtime databases and journals
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Node and Vite
+node_modules/
+dist/
+.vite/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Go and desktop bridge build output
+makervault/slicer-bridge/slicer-bridge
+makervault/slicer-bridge/slicer-bridge.exe
+makervault/slicer-bridge/bin/
+makervault/slicer-bridge/build/
+makervault/slicer-bridge/dist/
+
+# MakersVault runtime content
+makervault/data/
+makervault/imports/
+makervault/api/storage/
+makervault/storage/
+
+# IDE, operating-system, and temporary files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.temp
+*.log
