@@ -2,9 +2,9 @@
 
 **Status:** Governing working document
 
-**Baseline date:** 2026-08-13
+**Baseline date:** 2026-08-14
 
-**Committed baseline:** `main` at `80ddc5bb8849c0532ecf4de91010e450df28b940`
+**Committed baseline:** `main` at `1231565642b8541a7ad36ba4ffdeb2da9527ef89`
 
 **Target:** v5.1 and the strategic roadmap that follows it
 
@@ -149,11 +149,12 @@ Gate 0 and after every accepted gate.
 
 ### 5.1 Baseline qualification
 
-The committed anchor is `80ddc5bb8849c0532ecf4de91010e450df28b940`, but the
-working tree also contains the in-progress v5.1 UI, metadata, storage, preview,
-and model-bundle work. Therefore the commit alone is not a reproducible release
-baseline. Gate 0 must preserve the work, identify generated output, and create a
-named clean baseline before feature gates proceed.
+Commit `1231565642b8541a7ad36ba4ffdeb2da9527ef89` is the clean Gate 0 source
+baseline. It preserves the authorized v5.1 UI, metadata, storage, preview, and
+model-bundle work together with the Gate 0 safety foundation. Generated and
+runtime artifacts are excluded from source ownership. The complete local
+`make verify` target passed against this exact commit and left a clean working
+tree; remote CI observation remains pending.
 
 ### 5.2 Current component map
 
@@ -186,22 +187,22 @@ be made explicit before deployment boundaries are multiplied.
 |---|---|---|---|---|
 | T-001 | `VERIFIED` | The API is Python 3.11, FastAPI, SQLModel, and SQLite by default. | `api/requirements.txt`, `api/db.py` | SQLite-safe migrations and recovery are release requirements. |
 | T-002 | `VERIFIED` | The web client is React/Vite and performs substantial preview work in the browser. | `web/package.json`, `web/src/ui/ModelViewer.tsx`, `AssetGrid.tsx` | Preview work needs hard budgets and persisted outcomes. |
-| T-003 | `VERIFIED` | Production web packaging is a static build served by unprivileged Nginx with runtime API configuration. | `web/Dockerfile`, `web/nginx.conf`, `web/40-runtime-config.sh` | The security report's Vite-production finding must be revalidated and likely retired. |
+| T-003 | `VERIFIED` | Production web packaging is a static build served by unprivileged Nginx with runtime API configuration. | `web/Dockerfile`, `web/nginx.conf`, `web/40-runtime-config.sh` | The former production Vite-server finding is resolved in the Gate 0 baseline. |
 | T-004 | `VERIFIED` | Production deployment separates `/app/data` and `/app/storage`; development layout differs. | Docker Compose files | Backup instructions must distinguish production and development. |
 | T-005 | `VERIFIED` | Published deployment examples contain known fallback admin credentials and signing secrets. | deploy Compose files and `.env.example` | Fresh-production secret handling is a v5.1 blocker. |
 | T-006 | `VERIFIED` | Auth is one environment-configured administrator with 12-hour HS256 JWTs. There is no user, role, revocation, or MFA model. | `api/auth.py`, models | Multi-user security is a later dedicated architecture gate. |
 | T-007 | `VERIFIED` | Some file handoffs place bearer material in URLs, including custom-protocol handoff. | API schemas/routes and bridge code | Replace broad reusable bearer URLs with narrow, short-lived grants. |
 | T-008 | `VERIFIED` | The bridge accepts custom protocol input, downloads a URL, caches the result, and launches a local application. | `slicer-bridge` source | The bridge is a workstation trust boundary and needs protocol hardening. |
-| T-009 | `VERIFIED` | Current startup schema evolution uses `create_all` plus manual SQLite column/index changes and backfills. | `api/db.py` | A formal schema-version and migration mechanism precedes larger model changes. |
+| T-009 | `VERIFIED` | Startup uses an ordered, immutable SQLite migration ledger at schema version 3, with dependency locking and fail-closed version/name checks. | `api/migrations.py`, `api/db.py`, API migration tests | Larger model changes must extend this migration mechanism and retain old-database fixtures. |
 | T-010 | `VERIFIED` | Metadata is split between SQLite and filesystem content; updates are not one atomic transaction. | API storage and asset services | File mutations require staging, compensation, and reconciliation. |
 | T-011 | `VERIFIED` | Current records are `Folder`, `Asset`, `AssetFile`, and `AppConfig`; several JSON structures are stored as text. | `api/models.py` | Project/revision work must migrate rather than replace data in place. |
 | T-012 | `VERIFIED` | Managed primary files, thumbnails, and bundles use different storage layouts; no-copy records reference external paths. | asset/file services | Backup completeness and storage invariants must be explicit. |
 | T-013 | `VERIFIED` | Mounted scans deduplicate primarily by source path and report details to process logs. | `api/mount_import.py` | A durable scan job/report is required for v5.1 observability. |
 | T-014 | `VERIFIED` | URL import performs important address checks, but redirect and DNS behavior still need adversarial tests. | `api/url_utils.py`, security review | SSRF safety is proven by tests at the security gate, not presumed. |
 | T-015 | `VERIFIED` | Prepared payloads and visible supporting files already have distinct roles and response behavior. | `AssetFile`, prepared-print and ZIP services | Visibility/download invariants need regression tests. |
-| T-016 | `VERIFIED` | There is no established source-owned automated test suite or CI workflow, and web scripts provide no test/type-check command. | repository search, `web/package.json` | Gate 0 establishes the minimum safety harness. |
+| T-016 | `VERIFIED` | The repository owns a unified `make verify` harness and GitHub Actions workflow covering API migrations/routes, web type-check/tests/build, bridge tests/build, Compose validation, and container smoke behavior. | `Makefile`, `.github/workflows/ci.yml`, Gate 0 evidence | Later gates extend the shared harness and cannot substitute undocumented local checks. |
 | T-017 | `VERIFIED` | Large route and UI files concentrate behavior in `api/main.py` and `AssetGrid.tsx`. | source inventory | New work should extract seams incrementally; no rewrite gate is authorized. |
-| T-018 | `VERIFIED` | Multiple deployment manifests and tracked/generated runtime artifacts create truth drift. | repository status and manifests | Gate 0 names canonical artifacts and repository policy. |
+| T-018 | `VERIFIED` | Canonical local and production Compose manifests are named; compatibility aliases are tested; generated/runtime artifacts are ignored and absent from Git tracking. | ADR 0001, Compose validation, root `.gitignore`, Gate 0 evidence | Deployment and repository ownership drift is now detectable by the shared harness. |
 | T-019 | `DECIDED` | v5.1 is single-admin; multi-user/MFA/SSO is deferred. | product strategy and v5.1 scope | Security analysis statements that assume v5.1 multi-user are stale. |
 | T-020 | `DECIDED` | v5.1 is a confidence release, not the Project/Revision rewrite. | v5.1 scope | Reliability gates outrank future architecture work. |
 
@@ -361,9 +362,10 @@ Unless a gate explicitly proves an item irrelevant, completion requires:
 
 ### Gate 0 — Establish the reproducible baseline and safety harness
 
-**Current execution:** `EVIDENCE REVIEW` as of 2026-08-13. Local evidence is in
-[evidence/gate-0/RESULTS.md](evidence/gate-0/RESULTS.md). ADR acceptance, an
-immutable baseline commit, and its remote CI result remain before `ACCEPTED`.
+**Current execution:** `EVIDENCE REVIEW` as of 2026-08-14. Local evidence is in
+[evidence/gate-0/RESULTS.md](evidence/gate-0/RESULTS.md). Both ADRs are accepted,
+and immutable baseline `1231565642b8541a7ad36ba4ffdeb2da9527ef89` passed the
+complete local harness. Its remote CI result remains before `ACCEPTED`.
 
 **Objective:** Turn the current working version into a named, reproducible
 baseline that can be changed without guessing.
@@ -945,10 +947,7 @@ invariants and evidence standard do not change silently.
 
 ## 15. Immediate next action
 
-When code work is authorized, begin Gate 0. Do not begin by adding another product
-feature. First preserve the current v5.1 working state, establish the clean
-baseline, reconcile the security report, choose the migration mechanism and
-canonical deployment path, and produce the minimum automated safety harness.
-
-At the end of Gate 0, present its evidence and the two owner decisions for
-acceptance. Then re-cock this runbook and proceed to Gate 1.
+Push the immutable Gate 0 baseline when the owner authorizes that external
+action, observe the GitHub Actions result, and reconcile any discrepancy. If the
+remote run passes, record Gate 0 as `ACCEPTED` and begin Gate 1. If it does not,
+keep Gate 0 in `REWORK` until the same harness passes locally and remotely.

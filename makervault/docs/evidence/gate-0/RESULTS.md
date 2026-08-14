@@ -2,11 +2,14 @@
 
 **Gate:** 0 — Establish the reproducible baseline and safety harness
 
-**Status:** Evidence review; owner acceptance and immutable baseline pending
+**Status:** Evidence review; immutable baseline committed and locally verified;
+remote CI pending
 
-**Evidence date:** 2026-08-13
+**Evidence date:** 2026-08-14
 
 **Starting commit:** `80ddc5bb8849c0532ecf4de91010e450df28b940`
+
+**Immutable source baseline:** `1231565642b8541a7ad36ba4ffdeb2da9527ef89`
 
 ## Objective result
 
@@ -21,8 +24,9 @@ ADRs 0001 and 0002 were accepted by the owner on 2026-08-14. The Compose ADR now
 states explicitly that MakersVault remains a two-container application while the
 web container provides a one-host `/api` gateway.
 
-The remaining owner action is authorization to create the clean Gate 0 baseline
-commit.
+The clean Gate 0 baseline was committed and verified locally on 2026-08-14.
+The remaining external action is owner authorization to push the baseline so its
+GitHub Actions run can be observed.
 
 ## Files and data affected
 
@@ -111,8 +115,8 @@ current beta is safe for unrestricted Internet exposure.
 | Fresh and representative old database converge through repeatable migrations | Passed |
 | Canonical manifests and migration mechanism decided | Passed; owner accepted ADRs 0001 and 0002 on 2026-08-14 |
 | Security findings revalidated without silent contradictions | Passed |
-| Clean immutable source baseline | Pending owner-authorized commit |
-| Remote CI result against immutable baseline | Pending commit/push |
+| Clean immutable source baseline | Passed at `1231565642b8541a7ad36ba4ffdeb2da9527ef89` |
+| Remote CI result against immutable baseline | Pending push/workflow run |
 
 ## Residual risks and deferrals
 
@@ -125,7 +129,6 @@ current beta is safe for unrestricted Internet exposure.
 
 ## Next-gate recommendation
 
-After owner acceptance and an immutable baseline/CI result, mark Gate 0 accepted,
-re-cock the architecture truth, and begin Gate 1 with secure first-run
-configuration and bridge handoff design before dependency or parser changes are
-merged independently.
+After the baseline is pushed and its CI result is observed, mark Gate 0 accepted
+and begin Gate 1 with secure first-run configuration and bridge handoff design
+before dependency or parser changes are merged independently.

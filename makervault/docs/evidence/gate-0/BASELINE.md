@@ -1,12 +1,14 @@
 # Gate 0 Baseline Record
 
-**Gate status:** In progress
+**Gate status:** Evidence review; remote CI pending
 
-**Captured:** 2026-08-13
+**Captured:** 2026-08-13; immutable baseline established 2026-08-14
 
 **Branch:** `main`
 
-**Committed anchor:** `80ddc5bb8849c0532ecf4de91010e450df28b940`
+**Starting anchor:** `80ddc5bb8849c0532ecf4de91010e450df28b940`
+
+**Immutable source baseline:** `1231565642b8541a7ad36ba4ffdeb2da9527ef89`
 
 ## Qualification
 
@@ -15,9 +17,9 @@ v5.1 sidebar, metadata, storage-template, preview, supporting-file, and prepared
 print work, plus the strategy documents. That work is the functional baseline and
 was not reset, stashed, or overwritten.
 
-The committed anchor alone therefore does not reproduce the working application.
-A final Gate 0 source revision must include the preserved v5.1 changes and Gate 0
-foundation before this record can be marked accepted.
+The starting anchor alone therefore does not reproduce the working application.
+Commit `1231565642b8541a7ad36ba4ffdeb2da9527ef89` now preserves the v5.1 work and
+Gate 0 foundation as the clean source baseline.
 
 ## Initial source changes
 
@@ -73,3 +75,13 @@ bridge work. The web can also be verified through its Node test image.
   authenticated route smoke coverage.
 
 This record is updated, rather than replaced, when Gate 0 reaches evidence review.
+
+## Immutable baseline verification
+
+The complete `make verify` target passed against
+`1231565642b8541a7ad36ba4ffdeb2da9527ef89` after it was committed. The working
+tree was clean after verification, no smoke-test containers remained, and
+`git ls-files -ci --exclude-standard` reported zero tracked ignored paths.
+
+This hash is the Gate 0 source anchor even if evidence-only documentation is
+committed afterward. Remote CI observation remains the final Gate 0 exit item.
